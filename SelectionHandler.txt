@@ -1,0 +1,231 @@
+--starterplyaerscript
+local Players = game:GetService("Players")
+local Player = Players.LocalPlayer
+local Mouse = Player:GetMouse()
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local ActivarSeleccionUI = RemoteEvents:WaitForChild("ActivarSeleccionUI")
+local DesactivarSeleccionUI = RemoteEvents:WaitForChild("DesactivarSeleccionUI")
+local SeleccionEvent = RemoteEvents:WaitForChild("SeleccionHabilidad")
+local CancelarSeleccionEvent = RemoteEvents:WaitForChild("CancelarSeleccionHabilidad")
+local NotificacionHabilidad = RemoteEvents:WaitForChild("NotificacionHabilidad")
+
+local estaSeleccionando = false
+local requiereAliado = false
+local nombreHabilidad = ""
+
+-- Crear un ScreenGui independiente en PlayerGui (DESHABILITADO al inicio)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "SelectionUIMain"
+screenGui.Parent = Player.PlayerGui
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 10
+screenGui.Enabled = false  -- Deshabilitado hasta que se necesite
+
+local selectionText = Instance.new("TextLabel")
+selectionText.Name = "SelectionText"
+selectionText.Size = UDim2.new(0, 500, 0, 80)
+selectionText.Position = UDim2.new(0.5, -250, 0.15, 0)
+selectionText.BackgroundTransparency = 0.2
+selectionText.BackgroundColor3 = Color3.fromRGB(30, 30, 30) -- gris oscuro semitransparente
+selectionText.TextColor3 = Color3.fromRGB(255, 255, 255) -- texto blanco
+selectionText.TextStrokeTransparency = 0.6 -- leve sombra al texto
+selectionText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+selectionText.TextSize = 28
+selectionText.Font = Enum.Font.GothamBold -- fuente más moderna
+selectionText.Text = ""
+selectionText.Visible = false
+selectionText.BorderSizePixel = 0 -- sin borde feo
+selectionText.TextWrapped = true
+selectionText.ZIndex = 10
+selectionText.Parent = screenGui
+
+-- Extra: esquinas redondeadas
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = selectionText
+
+
+-- Función para detectar si es dispositivo móvil
+local function IsMobile()
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+
+-- Ajustar UI para móvil
+if IsMobile() then
+	selectionText.Size = UDim2.new(0, 600, 0, 100)
+	selectionText.Position = UDim2.new(0.5, -300, 0.1, 0)
+	selectionText.TextSize = 28
+end
+
+print("[SelectionHandler] ✅ GUI de selección creada correctamente (deshabilitada)")
+
+-- Función para verificar si un touch/clic fue en la UI
+local function EsInputEnUI(position)
+	for _, guiObject in ipairs(screenGui:GetDescendants()) do
+		if guiObject:IsA("GuiObject") and guiObject.Visible then
+			local absPos = guiObject.AbsolutePosition
+			local absSize = guiObject.AbsoluteSize
+			if position.X >= absPos.X and position.X <= absPos.X + absSize.X and
+				position.Y >= absPos.Y and position.Y <= absPos.Y + absSize.Y then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- Función para activar la selección
+ActivarSeleccionUI.OnClientEvent:Connect(function(nombreHabil, esAliado)
+	print("[SelectionHandler] 🎯 Activando selección para:", nombreHabil, "Requiere aliado:", esAliado)
+	estaSeleccionando = true
+	requiereAliado = esAliado
+	nombreHabilidad = nombreHabil
+
+	-- Habilitar la GUI solo cuando sea necesario
+	screenGui.Enabled = true
+
+	-- Activar UI con mensaje más visible
+	selectionText.Visible = true
+	selectionText.Text = "🎯 " .. nombreHabil .. "\nHaz clic en un " .. (esAliado and "ALIADO" or "ENEMIGO")
+
+	-- Mensaje específico para móvil
+	if IsMobile() then
+		selectionText.Text = "🎯 " .. nombreHabil .. "\nToca un " .. (esAliado and "ALIADO" or "ENEMIGO")
+	end
+
+	-- Mejorar visibilidad adicional
+	selectionText.BackgroundTransparency = 0.2
+	selectionText.TextColor3 = Color3.fromRGB(255, 255, 0)
+
+	-- Cambiar cursor (solo en PC)
+	if not IsMobile() then
+		Mouse.Icon = "rbxassetid://Cursor/Cross"
+	end
+
+	print("[SelectionHandler] 📝 Texto mostrado: " .. selectionText.Text)
+end)
+
+-- Función para desactivar la selección
+DesactivarSeleccionUI.OnClientEvent:Connect(function()
+	print("[SelectionHandler] 🚫 Desactivando selección")
+	estaSeleccionando = false
+	selectionText.Visible = false
+	selectionText.Text = ""
+	screenGui.Enabled = false  -- Deshabilitar la GUI cuando no se use
+
+	if not IsMobile() then
+		Mouse.Icon = ""
+	end
+end)
+
+-- Mostrar notificaciones
+NotificacionHabilidad.OnClientEvent:Connect(function(mensaje)
+	print("[Notificación] " .. mensaje)
+	-- Usar el mismo text label para notificaciones
+	selectionText.Visible = true
+	selectionText.Text = mensaje
+	selectionText.TextColor3 = Color3.fromRGB(255, 255, 255)  -- Blanco para notificaciones
+
+	-- Programar para ocultar después de 3 segundos
+	delay(3, function()
+		if selectionText.Text == mensaje then
+			selectionText.Visible = false
+			selectionText.Text = ""
+		end
+	end)
+end)
+
+-- Función para procesar selección de objetivo
+local function ProcesarSeleccion(target)
+	if not target then 
+		print("[SelectionHandler] ❌ No hay target")
+		return 
+	end
+
+	-- Obtener el modelo del objetivo
+	local modelo = target:FindFirstAncestorOfClass("Model")
+	if not modelo then 
+		print("[SelectionHandler] ❌ No se encontró un modelo ancestro")
+		return 
+	end
+
+	-- Verificar si tiene Humanoid (es un personaje)
+	if not modelo:FindFirstChildOfClass("Humanoid") then
+		print("[SelectionHandler] ❌ Objetivo no válido: no tiene Humanoid")
+		NotificacionHabilidad:Fire("❌ ¡Debes seleccionar un personaje!")
+		return
+	end
+
+	print("[SelectionHandler] 🎯 Objetivo seleccionado:", modelo.Name)
+
+	-- Enviar la selección al servidor
+	SeleccionEvent:FireServer(modelo)
+
+	-- Desactivar selección inmediatamente
+	estaSeleccionando = false
+	selectionText.Visible = false
+	selectionText.Text = ""
+	if not IsMobile() then
+		Mouse.Icon = ""
+	end
+	print("[SelectionHandler] 🧹 Selección desactivada")
+end
+
+-- Detectar clic en objetivo (PC)
+Mouse.Button1Down:Connect(function()
+	if not estaSeleccionando then 
+		print("[SelectionHandler] No está en modo selección, ignorando clic")
+		return 
+	end
+
+	-- Verificar si el clic fue en un elemento de UI
+	if EsInputEnUI(Vector2.new(Mouse.X, Mouse.Y)) then
+		print("[SelectionHandler] Clic en UI, ignorando")
+		return
+	end
+
+	print("[SelectionHandler] 🖱️ Clic detectado en modo selección")
+	ProcesarSeleccion(Mouse.Target)
+end)
+
+-- Detectar touch en objetivo (Móvil)
+UserInputService.TouchStarted:Connect(function(input, processed)
+	if not estaSeleccionando or processed then 
+		return 
+	end
+
+	-- Verificar si el touch fue en la UI
+	if EsInputEnUI(input.Position) then
+		print("[SelectionHandler] Touch en UI, ignorando")
+		return
+	end
+
+	print("[SelectionHandler] 📱 Touch detectado en modo selección")
+
+	-- Convertir coordenadas de touch a ray
+	local ray = workspace.CurrentCamera:ViewportPointToRay(input.Position.X, input.Position.Y)
+	local target = workspace:FindPartOnRay(ray)
+
+	ProcesarSeleccion(target)
+end)
+
+-- Cancelar selección con tecla Escape (solo PC)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	if estaSeleccionando and input.KeyCode == Enum.KeyCode.Escape then
+		print("[SelectionHandler] 🚫 Selección cancelada por el usuario")
+		CancelarSeleccionEvent:FireServer()
+		estaSeleccionando = false
+		selectionText.Visible = false
+		selectionText.Text = ""
+		if not IsMobile() then
+			Mouse.Icon = ""
+		end
+	end
+end)
+
+print("[SelectionHandler] ✅ Cargado correctamente")
