@@ -1,0 +1,43 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local eventoTeleport = ReplicatedStorage:WaitForChild("RemoteTeleportJugador")
+
+local function reaparecer(character)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		-- 🔥 EVITAR MÚLTIPLES CONEXIONES - Solo conectar una vez
+		if not humanoid:FindFirstChild("DeathConnection") then
+			local connectionMarker = Instance.new("BoolValue")
+			connectionMarker.Name = "DeathConnection"
+			connectionMarker.Parent = humanoid
+
+			humanoid.Died:Connect(function()
+				print("💀 Personaje muerto, esperando para respawn...")
+				wait(2) -- Espera antes de reaparecer
+
+				-- Obtener el personaje y equipo desde los valores guardados
+				local nombrePersonaje = player:FindFirstChild("NombrePersonaje")
+				local equipo = player:FindFirstChild("Equipo")
+
+				if nombrePersonaje and equipo then
+					print("🔄 Solicitando respawn de:", nombrePersonaje.Value, "Equipo:", equipo.Value)
+					eventoTeleport:FireServer(nombrePersonaje.Value, equipo.Value)
+				else
+					warn("⚠️ No se encontró NombrePersonaje o Equipo en el jugador.")
+				end
+			end)
+		end
+	end
+end
+
+-- Conectar cuando se cree un nuevo personaje
+player.CharacterAdded:Connect(reaparecer)
+
+-- Llamar si ya hay personaje
+if player.Character then
+	reaparecer(player.Character)
+end
+
+print("✅ Sistema de respawn automático inicializado")
