@@ -1,0 +1,221 @@
+-- 📘 ReplicatedStorage/EquipoManager.lua
+-- Compatible con sistemas que usan nombres ("TemplariosDeLaLuz") o números (1, 2)
+-- ✅ CORREGIDO: Neutrales son aliados entre ellos
+
+local EquipoManager = {}
+
+-- 🔥 CONFIGURACIÓN DE EQUIPOS Y SUS SINÓNIMOS (ACTUALIZADO)
+local EQUIPO_ALIAS = {
+	["1"] = "HijosDelVacio",
+	["2"] = "TemplariosDeLaLuz", 
+	["3"] = "Neutral",  -- 🆕 NUEVO EQUIPO NEUTRAL
+	["HijosDelVacio"] = "HijosDelVacio",
+	["TemplariosDeLaLuz"] = "TemplariosDeLaLuz",
+	["Neutral"] = "Neutral",  -- 🆕 NUEVO EQUIPO NEUTRAL
+	["Equipo1"] = "HijosDelVacio",
+	["Equipo2"] = "TemplariosDeLaLuz",
+	["Equipo3"] = "Neutral"  -- 🆕 NUEVO EQUIPO NEUTRAL
+}
+
+-- 🧩 Relación de enemigos (ACTUALIZADO CON NEUTRALES)
+local ENEMIGOS = {
+	["HijosDelVacio"] = {"TemplariosDeLaLuz", "Neutral"},  -- 🆕 Neutral es enemigo
+	["TemplariosDeLaLuz"] = {"HijosDelVacio", "Neutral"}, -- 🆕 Neutral es enemigo  
+	["Neutral"] = {"HijosDelVacio", "TemplariosDeLaLuz"}  -- 🆕 Ambos equipos son enemigos, PERO NO OTROS NEUTRALES
+}
+
+-- 🎯 FUNCIÓN AUXILIAR: Verificar si un equipo está en la lista de enemigos
+local function EsEnemigoDe(equipoA, equipoB)
+	if not equipoA or not equipoB then return false end
+
+	-- 🆕 CORRECCIÓN: Los neutrales NO son enemigos de otros neutrales
+	if equipoA == "Neutral" and equipoB == "Neutral" then
+		return false
+	end
+
+	local enemigosA = ENEMIGOS[equipoA]
+	if not enemigosA then return false end
+
+	for _, enemigo in ipairs(enemigosA) do
+		if enemigo == equipoB then
+			return true
+		end
+	end
+
+	return false
+end
+
+-- 🔍 Obtiene el nombre normalizado del equipo (ejemplo: "Equipo 1" → "HijosDelVacío")
+function EquipoManager.ObtenerEquipo(entidad)
+	if not entidad then return nil end
+
+	local valorEquipo
+
+	-- Si es un jugador, mirar en Character
+	if entidad:IsA("Player") and entidad.Character then
+		local eq = entidad.Character:FindFirstChild("Equipo")
+		if eq and eq:IsA("StringValue") then
+			valorEquipo = eq.Value
+		else
+			valorEquipo = entidad.Character:GetAttribute("Equipo")
+		end
+	end
+
+	-- Si es un modelo
+	if not valorEquipo and entidad:IsA("Model") then
+		local eq = entidad:FindFirstChild("Equipo")
+		if eq and eq:IsA("StringValue") then
+			valorEquipo = eq.Value
+		else
+			valorEquipo = entidad:GetAttribute("Equipo")
+		end
+	end
+
+	-- Fallback genérico (por si es una parte u otra instancia)
+	if not valorEquipo then
+		valorEquipo = entidad:GetAttribute("Equipo")
+	end
+
+	if not valorEquipo then return nil end
+
+	-- Normaliza a nombre de equipo
+	local equipoNormalizado = EQUIPO_ALIAS[tostring(valorEquipo)]
+	return equipoNormalizado or valorEquipo
+end
+
+-- 💥 Devuelve true si los dos pertenecen a equipos enemigos (ACTUALIZADO)
+function EquipoManager.SonEnemigos(a, b)
+	local equipoA = EquipoManager.ObtenerEquipo(a)
+	local equipoB = EquipoManager.ObtenerEquipo(b)
+
+	if not equipoA or not equipoB then
+		-- Si alguno no tiene equipo, se considera enemigo (neutral o hostil)
+		return true
+	end
+
+	-- 🆕 CORRECCIÓN: Los neutrales NO son enemigos entre ellos
+	if equipoA == "Neutral" and equipoB == "Neutral" then
+		return false
+	end
+
+	-- 🆕 LOS NEUTRALES SON ENEMIGOS DE TODOS LOS NO-NEUTRALES Y VICEVERSA
+	if equipoA == "Neutral" or equipoB == "Neutral" then
+		return true
+	end
+
+	-- Enemigos normales (entre equipos)
+	return EsEnemigoDe(equipoA, equipoB) or EsEnemigoDe(equipoB, equipoA)
+end
+
+-- ⚔️ Verifica si un atacante puede dañar al objetivo (ACTUALIZADO)
+function EquipoManager.PuedeAtacar(atacante, objetivo)
+	if not atacante or not objetivo then return false end
+
+	-- 🆕 CORRECCIÓN: Los neutrales NO pueden atacar a otros neutrales
+	local equipoAtacante = EquipoManager.ObtenerEquipo(atacante)
+	local equipoObjetivo = EquipoManager.ObtenerEquipo(objetivo)
+
+	if equipoAtacante == "Neutral" and equipoObjetivo == "Neutral" then
+		return false
+	end
+
+	-- 🆕 LOS NEUTRALES PUEDEN ATACAR A CUALQUIER NO-NEUTRAL Y VICEVERSA
+	if equipoAtacante == "Neutral" or equipoObjetivo == "Neutral" then
+		return true
+	end
+
+	-- Comportamiento normal para no-neutrales
+	return EquipoManager.SonEnemigos(atacante, objetivo)
+end
+
+-- 🆕 NUEVA FUNCIÓN: Verificar si es un minion neutral
+function EquipoManager.EsNeutral(entidad)
+	local equipo = EquipoManager.ObtenerEquipo(entidad)
+	return equipo == "Neutral"
+end
+
+-- 🆕 NUEVA FUNCIÓN: Verificar si son del mismo equipo
+function EquipoManager.SonAliados(a, b)
+	if not a or not b then return false end
+
+	local equipoA = EquipoManager.ObtenerEquipo(a)
+	local equipoB = EquipoManager.ObtenerEquipo(b)
+
+	if not equipoA or not equipoB then return false end
+
+	-- 🆕 CORRECCIÓN: Los neutrales SON aliados de otros neutrales
+	if equipoA == "Neutral" and equipoB == "Neutral" then
+		return true
+	end
+
+	-- 🆕 Los neutrales NO son aliados de ningún equipo
+	if equipoA == "Neutral" or equipoB == "Neutral" then
+		return false
+	end
+
+	return equipoA == equipoB
+end
+
+-- 🆕 NUEVA FUNCIÓN: Obtener equipo enemigo
+function EquipoManager.ObtenerEquipoEnemigo(entidad)
+	local equipo = EquipoManager.ObtenerEquipo(entidad)
+	if not equipo then return nil end
+
+	local enemigos = ENEMIGOS[equipo]
+	if not enemigos or #enemigos == 0 then return nil end
+
+	-- Para neutrales, devuelve un equipo aleatorio (ya que ambos son enemigos)
+	if equipo == "Neutral" then
+		return enemigos[math.random(1, #enemigos)]
+	end
+
+	-- Para equipos normales, devuelve el primer enemigo (generalmente el único)
+	return enemigos[1]
+end
+
+-- 🆕 NUEVA FUNCIÓN: Listar todos los equipos
+function EquipoManager.ObtenerTodosEquipos()
+	return {"HijosDelVacio", "TemplariosDeLaLuz", "Neutral"}
+end
+
+-- 🆕 NUEVA FUNCIÓN: Verificar si un string es un equipo válido
+function EquipoManager.EsEquipoValido(nombreEquipo)
+	local equipos = EquipoManager.ObtenerTodosEquipos()
+	for _, equipo in ipairs(equipos) do
+		if equipo == nombreEquipo then
+			return true
+		end
+	end
+	return false
+end
+
+-- 🆕 NUEVA FUNCIÓN: Asignar equipo a una entidad
+function EquipoManager.AsignarEquipo(entidad, equipo)
+	if not entidad then return false end
+
+	local equipoNormalizado = EQUIPO_ALIAS[tostring(equipo)] or equipo
+
+	if not EquipoManager.EsEquipoValido(equipoNormalizado) then
+		warn("❌ EquipoManager: Intento de asignar equipo inválido: " .. tostring(equipo))
+		return false
+	end
+
+	-- Asignar como atributo
+	entidad:SetAttribute("Equipo", equipoNormalizado)
+
+	-- Si es un Model, también crear/actualizar el StringValue
+	if entidad:IsA("Model") then
+		local equipoValue = entidad:FindFirstChild("Equipo")
+		if not equipoValue then
+			equipoValue = Instance.new("StringValue")
+			equipoValue.Name = "Equipo"
+			equipoValue.Parent = entidad
+		end
+		equipoValue.Value = equipoNormalizado
+	end
+
+	print("✅ EquipoManager: Asignado equipo '" .. equipoNormalizado .. "' a " .. entidad.Name)
+	return true
+end
+
+return EquipoManager
