@@ -1,0 +1,35 @@
+-- 📁 Script: NeutralMinionInitializer (en ServerScriptService)
+local NeutralMinionInitializer = {}
+
+local Players = game:GetService("Players")
+local NeutralMinionSpawner = require(script.Parent:WaitForChild("NeutralMinionSpawner"))
+
+local initialized = false
+
+function NeutralMinionInitializer.Initialize()
+	if initialized then return end
+
+	print("🚀 [NeutralMinionInitializer] Iniciando sistema...")
+
+	if #Players:GetPlayers() > 0 then
+		NeutralMinionSpawner.Initialize()
+		initialized = true
+		print("✅ [NeutralMinionInitializer] Inicializado por jugadores existentes")
+	else
+		local connection
+		connection = Players.PlayerAdded:Connect(function(player)
+			print("👤 [NeutralMinionInitializer] Jugador agregado: " .. player.Name)
+			if not initialized then
+				NeutralMinionSpawner.Initialize()
+				initialized = true
+				connection:Disconnect()
+				print("✅ [NeutralMinionInitializer] Inicializado por nuevo jugador")
+			end
+		end)
+	end
+end
+
+-- Inicializar automáticamente
+NeutralMinionInitializer.Initialize()
+
+return NeutralMinionInitializer
