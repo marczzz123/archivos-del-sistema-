@@ -1,0 +1,7 @@
+-- If you want to manually control character spawning, uncomment the next line:
+--game.Players.CharacterAutoLoads = false
+
+game.Players.PlayerAdded:Connect(function(player)
+	-- player.CharacterAutoLoad = false -- This property does not exist and causes errors. Remove or comment out.
+end)
+
