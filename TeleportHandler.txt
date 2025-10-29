@@ -1,14 +1,305 @@
+-- Script en ServerScriptService: TeleportHandler.server.lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ServerScriptService = game:GetService("ServerScriptService")
+local TweenService = game:GetService("TweenService")
 
-Players.PlayerAdded:Connect(function(player)
-	player.CharacterAdded:Connect(function(character)
-		local lugarSeguro = workspace:WaitForChild("lugarseguro")
-		wait(0.1)
+-- Eventos y Módulos
+local eventoTeleport = ReplicatedStorage:WaitForChild("RemoteTeleportJugador")
+local verificarPersonajeEvent = ReplicatedStorage:WaitForChild("VerificarPersonaje")
+local nivelConfig = require(ReplicatedStorage.Modulos:WaitForChild("NivelConfig"))
+local statsConfig = require(ReplicatedStorage.Modulos:WaitForChild("StatsHeroes"))
+local ParteWelds = require(ReplicatedStorage.Modulos:WaitForChild("ParteWelds"))
 
-		-- Solo mover si es la primera vez
-		if not player:GetAttribute("TeletransportadoInicial") then
-			character:SetPrimaryPartCFrame(lugarSeguro.CFrame + Vector3.new(0, 3, 0))
-			player:SetAttribute("TeletransportadoInicial", true)
+-- Sistemas Integrados
+local nivelHandler = require(ServerScriptService:WaitForChild("NivelHandler"))
+local SistemaDeltems = require(ServerScriptService:WaitForChild("SistemaDeltems"))
+
+-- Tablas Globales
+local personajesOcupados = {}
+local nombresReales = {
+	Personaje1 = "Spartan",
+	Personaje2 = "Nythera", 
+	Personaje3 = "Sonic",
+	Personaje4 = "DragonYinYan",
+	Personaje6 = "Blacktor",
+	Personaje7 = "Zombie",
+	Personaje8 = "Mireya"
+}
+
+-- Crear spawn points si no existen
+local function configurarSpawnPoints()
+	local spawnFolder = Workspace:FindFirstChild("SpawnPoints")
+	if not spawnFolder then
+		spawnFolder = Instance.new("Folder")
+		spawnFolder.Name = "SpawnPoints"
+		spawnFolder.Parent = Workspace
+	end
+
+	if not spawnFolder:FindFirstChild("HijosDelVacio") then
+		local spawn1 = Instance.new("Part")
+		spawn1.Name = "HijosDelVacio"
+		spawn1.Anchored = true
+		spawn1.CanCollide = false
+		spawn1.Size = Vector3.new(10, 1, 10)
+		spawn1.Position = Vector3.new(-50, 5, 0)
+		spawn1.BrickColor = BrickColor.new("Bright blue")
+		spawn1.Transparency = 0.7
+		spawn1.Material = Enum.Material.Neon
+		spawn1.Parent = spawnFolder
+	end
+
+	if not spawnFolder:FindFirstChild("TemplariosDeLaLuz") then
+		local spawn2 = Instance.new("Part")
+		spawn2.Name = "TemplariosDeLaLuz"
+		spawn2.Anchored = true
+		spawn2.CanCollide = false
+		spawn2.Size = Vector3.new(10, 1, 10)
+		spawn2.Position = Vector3.new(50, 5, 0)
+		spawn2.BrickColor = BrickColor.new("Bright red")
+		spawn2.Transparency = 0.7
+		spawn2.Material = Enum.Material.Neon
+		spawn2.Parent = spawnFolder
+	end
+end
+
+-- FUNCIONES DE VERIFICACIÓN DE PERSONAJES
+local function verificarDisponibilidad(nombrePersonaje)
+	return not personajesOcupados[nombrePersonaje]
+end
+
+local function ocuparPersonaje(nombrePersonaje, jugador)
+	personajesOcupados[nombrePersonaje] = {Jugador = jugador, Tiempo = os.time()}
+end
+
+local function liberarPersonaje(jugador)
+	for nombrePersonaje, datos in pairs(personajesOcupados) do
+		if datos.Jugador == jugador then
+			personajesOcupados[nombrePersonaje] = nil
+			break
 		end
+	end
+end
+
+-- FUNCIONES PRINCIPALES
+local function obtenerEquipoBalanceado()
+	local equipos = {HijosDelVacio = 0, TemplariosDeLaLuz = 0}
+	for _, player in ipairs(Players:GetPlayers()) do
+		local equipo = player:GetAttribute("Equipo")
+		if equipo and equipos[equipo] then
+			equipos[equipo] += 1
+		end
+	end
+	if equipos.HijosDelVacio < equipos.TemplariosDeLaLuz and equipos.HijosDelVacio < 5 then
+		return "HijosDelVacio"
+	elseif equipos.TemplariosDeLaLuz < 5 then
+		return "TemplariosDeLaLuz"
+	elseif equipos.HijosDelVacio < 5 then
+		return "HijosDelVacio"
+	else
+		return math.random(1, 2) == 1 and "HijosDelVacio" or "TemplariosDeLaLuz"
+	end
+end
+
+local function obtenerTemplatePersonaje(nombrePersonaje)
+	local modelosFolder = ReplicatedStorage:FindFirstChild("Modelos")
+	if not modelosFolder then return nil end
+	return modelosFolder:FindFirstChild(nombrePersonaje)
+end
+
+local function configurarAtributosPersonaje(personaje, jugador, nombrePersonaje, equipo, nivelGuardado, xpGuardado)
+	local nombreReal = nombresReales[nombrePersonaje] or "Desconocido"
+	personaje:SetAttribute("NombreReal", nombreReal)
+	jugador:SetAttribute("NombreReal", nombreReal)
+	jugador:SetAttribute("BaseFuerza", nil)
+	jugador:SetAttribute("BaseDefensa", nil)
+	jugador:SetAttribute("BaseVidaMax", nil)
+	jugador:SetAttribute("Fuerza", nil)
+	jugador:SetAttribute("Defensa", nil)
+	jugador:SetAttribute("VidaMax", nil)
+	jugador:SetAttribute("Equipo", equipo)
+	jugador:SetAttribute("Nivel", nivelGuardado)
+	jugador:SetAttribute("Experiencia", xpGuardado)
+	personaje:SetAttribute("NombrePersonaje", nombrePersonaje)
+	personaje:SetAttribute("Equipo", equipo)
+	personaje:SetAttribute("Nivel", nivelGuardado)
+	personaje:SetAttribute("Experiencia", xpGuardado)
+	local xpMax = nivelConfig.RequerimientosXP[nivelGuardado + 1] or 0
+	personaje:SetAttribute("XPMax", xpMax)
+	jugador:SetAttribute("XPMax", xpMax)
+	jugador:SetAttribute("UIStatsReady", false)
+	task.spawn(function()
+		task.wait(0.5)
+		nivelHandler.InicializarStatsBase(personaje, nivelGuardado)
 	end)
+end
+
+local function guardarDatosJugador(jugador, nombrePersonaje, equipo)
+	local nombreValor = jugador:FindFirstChild("NombrePersonaje") or Instance.new("StringValue")
+	nombreValor.Name = "NombrePersonaje"
+	nombreValor.Value = nombrePersonaje
+	nombreValor.Parent = jugador
+
+	local equipoValor = jugador:FindFirstChild("Equipo") or Instance.new("StringValue")
+	equipoValor.Name = "Equipo"
+	equipoValor.Value = equipo
+	equipoValor.Parent = jugador
+
+	if not jugador:FindFirstChild("NivelGuardado") then
+		local nivelValor = Instance.new("NumberValue")
+		nivelValor.Name = "NivelGuardado"
+		nivelValor.Value = 1
+		nivelValor.Parent = jugador
+	end
+
+	if not jugador:FindFirstChild("ExperienciaGuardada") then
+		local xpValor = Instance.new("NumberValue")
+		xpValor.Name = "ExperienciaGuardada"
+		xpValor.Value = 0
+		xpValor.Parent = jugador
+	end
+end
+
+local function obtenerPuntoSpawn(equipo)
+	local spawnFolder = Workspace:FindFirstChild("SpawnPoints")
+	local spawnPoint = spawnFolder and spawnFolder:FindFirstChild(equipo) or Workspace:FindFirstChild(equipo)
+	if spawnPoint and spawnPoint:IsA("BasePart") then
+		local size = spawnPoint.Size
+		local randomX = math.random(-size.X/2, size.X/2)
+		local randomZ = math.random(-size.Z/2, size.Z/2)
+		return CFrame.new(spawnPoint.Position + Vector3.new(randomX, 3, randomZ))
+	else
+		return equipo == "HijosDelVacio" and CFrame.new(-50, 5, 0) or CFrame.new(50, 5, 0)
+	end
+end
+
+local function crearEfectoSpawn(personaje, spawnCFrame)
+	local p = Instance.new("Part")
+	p.Name = "SpawnEffect"
+	p.Size = Vector3.new(5, 5, 5)
+	p.CFrame = spawnCFrame
+	p.Anchored = true
+	p.CanCollide = false
+	p.Material = Enum.Material.Neon
+	p.BrickColor = BrickColor.new("Bright yellow")
+	p.Transparency = 0.3
+	p.Parent = Workspace
+	local tween = TweenService:Create(p, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 1, Size = Vector3.new(0, 0, 0)})
+	tween:Play()
+	tween.Completed:Connect(function() p:Destroy() end)
+end
+
+-- EVENTOS
+verificarPersonajeEvent.OnServerEvent:Connect(function(jugador, nombrePersonaje, equipo)
+	local equipoReal = equipo == "Equipo1" and "HijosDelVacio" or equipo == "Equipo2" and "TemplariosDeLaLuz" or equipo
+	if verificarDisponibilidad(nombrePersonaje) then
+		ocuparPersonaje(nombrePersonaje, jugador)
+		verificarPersonajeEvent:FireClient(jugador, true, nombrePersonaje, equipoReal)
+	else
+		local ocupante = personajesOcupados[nombrePersonaje].Jugador
+		verificarPersonajeEvent:FireClient(jugador, false, nombrePersonaje, ocupante.Name)
+	end
+end)
+
+eventoTeleport.OnServerEvent:Connect(function(jugador, nombrePersonaje, equipo)
+	local equipoReal = equipo == "Equipo1" and "HijosDelVacio" or equipo == "Equipo2" and "TemplariosDeLaLuz" or equipo or obtenerEquipoBalanceado()
+	if personajesOcupados[nombrePersonaje] and personajesOcupados[nombrePersonaje].Jugador ~= jugador then
+		local ocupante = personajesOcupados[nombrePersonaje].Jugador
+		verificarPersonajeEvent:FireClient(jugador, false, nombrePersonaje, ocupante.Name)
+		return
+	end
+	local contadorEquipo = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= jugador and player:GetAttribute("Equipo") == equipoReal then
+			contadorEquipo += 1
+		end
+	end
+	if contadorEquipo >= 5 then
+		equipoReal = obtenerEquipoBalanceado()
+	end
+	local template = obtenerTemplatePersonaje(nombrePersonaje)
+	if not template then return end
+	local clon = template:Clone()
+	clon.Name = jugador.Name
+	if nombrePersonaje == "Personaje3" then
+		ParteWelds.UnirPartesExtras(clon)
+	end
+	local nivelGuardado = jugador:FindFirstChild("NivelGuardado") and jugador.NivelGuardado.Value or 1
+	local xpGuardado = jugador:FindFirstChild("ExperienciaGuardada") and jugador.ExperienciaGuardada.Value or 0
+	configurarAtributosPersonaje(clon, jugador, nombrePersonaje, equipoReal, nivelGuardado, xpGuardado)
+	guardarDatosJugador(jugador, nombrePersonaje, equipoReal)
+	if not clon.PrimaryPart then
+		local hrp = clon:FindFirstChild("HumanoidRootPart") or clon:FindFirstChildWhichIsA("BasePart")
+		if hrp then clon.PrimaryPart = hrp else return end
+	end
+	local spawnCFrame = obtenerPuntoSpawn(equipoReal)
+	crearEfectoSpawn(clon, spawnCFrame)
+	clon:PivotTo(spawnCFrame)
+	if jugador.Character then jugador.Character:Destroy() end
+	clon.Parent = Workspace
+	jugador.Character = clon
+	local flag = Instance.new("BoolValue")
+	flag.Name = "IsSpawning"
+	flag.Parent = clon
+	task.delay(3, function()
+		if flag and flag.Parent then flag:Destroy() end
+	end)
+end)
+
+-- LIMPIEZA
+Players.PlayerRemoving:Connect(liberarPersonaje)
+
+task.spawn(function()
+	while true do
+		task.wait(30)
+		for nombrePersonaje, datos in pairs(personajesOcupados) do
+			if not datos.Jugador or not datos.Jugador.Parent then
+				personajesOcupados[nombrePersonaje] = nil
+			end
+		end
+	end
+end)
+
+-- INICIALIZACIÓN
+configurarSpawnPoints()
+
+for _, jugador in ipairs(Players:GetPlayers()) do
+	if not jugador:FindFirstChild("NivelGuardado") then
+		local nivelValor = Instance.new("NumberValue")
+		nivelValor.Name = "NivelGuardado"
+		nivelValor.Value = 1
+		nivelValor.Parent = jugador
+	end
+	if not jugador:FindFirstChild("ExperienciaGuardada") then
+		local xpValor = Instance.new("NumberValue")
+		xpValor.Name = "ExperienciaGuardada"
+		xpValor.Value = 0
+		xpValor.Parent = jugador
+	end
+	if jugador.Character then
+		task.spawn(function()
+			task.wait(2)
+			local nivel = jugador:GetAttribute("Nivel") or jugador:FindFirstChild("NivelGuardado") and jugador.NivelGuardado.Value or 1
+			if jugador.Character and not jugador:GetAttribute("BaseFuerza") then
+				nivelHandler.InicializarStatsBase(jugador.Character, nivel)
+			end
+		end)
+	end
+end
+
+Players.PlayerAdded:Connect(function(jugador)
+	jugador:WaitForChild("PlayerGui")
+	if not jugador:FindFirstChild("NivelGuardado") then
+		local nivelValor = Instance.new("NumberValue")
+		nivelValor.Name = "NivelGuardado"
+		nivelValor.Value = 1
+		nivelValor.Parent = jugador
+	end
+	if not jugador:FindFirstChild("ExperienciaGuardada") then
+		local xpValor = Instance.new("NumberValue")
+		xpValor.Name = "ExperienciaGuardada"
+		xpValor.Value = 0
+		xpValor.Parent = jugador
+	end
 end)
