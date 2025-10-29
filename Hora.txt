@@ -1,0 +1,32 @@
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+
+-- Configuración inicial
+Lighting.ClockTime = 8  -- Comenzar a las 8:00 AM
+Lighting.GeographicLatitude = 21  -- Ajuste para iluminación adecuada
+
+-- Mover efectos de post-procesamiento a Lighting (si es necesario)
+local bloom = workspace:FindFirstChild("Bloom")
+local sunRays = workspace:FindFirstChild("SunRays")
+local blur = workspace:FindFirstChild("Blur")
+local colorCorrection = workspace:FindFirstChild("ColorCorrection")
+
+if bloom then bloom.Parent = Lighting end
+if sunRays then sunRays.Parent = Lighting end
+if blur then blur.Parent = Lighting end
+if colorCorrection then colorCorrection.Parent = Lighting end
+
+-- Configurar ciclo de tiempo: 10 minutos reales = 24 horas en el juego
+local realSecondsPerGameDay = 10 * 60  -- 10 minutos en segundos
+local gameHoursPerRealSecond = 24 / realSecondsPerGameDay
+
+-- Función para actualizar la hora
+local function updateTime()
+	local deltaTime = RunService.Heartbeat:Wait()
+	Lighting.ClockTime = (Lighting.ClockTime + gameHoursPerRealSecond * deltaTime) % 24
+end
+
+-- Iniciar el ciclo
+while true do
+	updateTime()
+end
