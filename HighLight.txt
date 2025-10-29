@@ -1,0 +1,19 @@
+local module = {}
+
+local Debris = game:GetService("Debris")
+
+function module.New(enemy)
+	
+	local Enemy = enemy.Parent
+	
+	local high = Instance.new("Highlight", Enemy)
+	high.Adornee = Enemy
+	high.Enabled = true
+	high.FillColor = Color3.new(0.972549, 0.972549, 0.972549)
+	high.FillTransparency = 0.6
+	high.OutlineTransparency = 1
+	
+	Debris:AddItem(high, 0.2)
+end
+
+return module
