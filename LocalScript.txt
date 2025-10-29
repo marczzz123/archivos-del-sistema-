@@ -1,4 +1,4 @@
---
+--StarterGui/HabilidadesGui(screengui)/TiendaFrame(frame)/localscript 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
