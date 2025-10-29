@@ -1,0 +1,723 @@
+-- ZombieModule.lua (ReplicatedStorage/Habilidades)
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+-- Cargar módulos con validación
+local VidaManager, EquipoManager, EstadoManager, CombatManager
+
+if RunService:IsServer() then
+	local success1, vm = pcall(function() return require(game.ServerScriptService:WaitForChild("VidaManager")) end)
+	local success2, em = pcall(function() return require(game.ReplicatedStorage:WaitForChild("EquipoManager")) end)
+	local success3, sm = pcall(function() return require(game.ServerScriptService:WaitForChild("EstadoManager")) end)
+	local success4, cm = pcall(function() return require(game.ReplicatedStorage:WaitForChild("CombatManager")) end)
+
+	VidaManager = success1 and vm or nil
+	EquipoManager = success2 and em or nil
+	EstadoManager = success3 and sm or nil
+	CombatManager = success4 and cm or nil
+end
+
+-- 🔍 FUNCIÓN AUXILIAR MEJORADA PARA OBTENER ENEMIGOS VÁLIDOS
+local function obtenerEnemigos(character)
+	local enemigos = {}
+
+	-- Primero revisar jugadores
+	for _, jugador in ipairs(Players:GetPlayers()) do
+		local target = jugador.Character
+		if target and target ~= character and target:FindFirstChild("Humanoid") then
+			local humanoide = target:FindFirstChild("Humanoid")
+			if humanoide and humanoide.Health > 0 then
+				if EquipoManager and EquipoManager.SonEnemigos(character, target) then
+					table.insert(enemigos, target)
+				end
+			end
+		end
+	end
+
+	-- Luego revisar NPCs y minions
+	for _, npc in ipairs(workspace:GetChildren()) do
+		if npc:IsA("Model") and npc ~= character and npc:FindFirstChild("Humanoid") then
+			local humanoide = npc:FindFirstChild("Humanoid")
+			-- Verificar que no sea del mismo equipo y que esté vivo
+			if humanoide and humanoide.Health > 0 and EquipoManager and EquipoManager.SonEnemigos(character, npc) then
+				-- Excluir zombies invocados por el mismo jugador
+				local esInvocadoPorMi = npc:GetAttribute("Invocador") == character
+				if not esInvocadoPorMi then
+					table.insert(enemigos, npc)
+				end
+			end
+		end
+	end
+
+	return enemigos
+end
+
+local ZombieSkills = {}
+
+-- Habilidad 1: Esporas del Olvido (Actualizada con niveles)
+ZombieSkills["1"] = {
+	Nombre = "Esporas del Olvido",
+	Descripcion = "Exhala una nube tóxica que confunde y debilita a los enemigos. Más radio y duración con nivel.",
+	Cooldown = 20,
+	Tipo = "Direccion",
+	Execute = RunService:IsServer() and function(character, direccion, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return false end
+
+		print("[ZombieSkills][Esporas] Activada por:", character.Name, "Nivel:", nivel)
+
+		-- Activar RemoteEvent para efecto visual en cliente
+		local esporasEvent = game.ReplicatedStorage:FindFirstChild("ZombieEsporasEvent")
+		if esporasEvent then
+			esporasEvent:FireAllClients(character, hrp.Position, hrp.CFrame.LookVector, nivel)
+		end
+
+		-- Aplicar efectos a enemigos en cono (mejoras con nivel)
+		local posicion = hrp.Position
+		local direccion = hrp.CFrame.LookVector
+		local radio = 8 + (nivel * 1.5)  -- Más radio con nivel
+		local angulo = 60 + (nivel * 5)   -- Más ángulo con nivel
+
+		local enemigos = obtenerEnemigos(character)
+		for _, target in ipairs(enemigos) do
+			local targetHrp = target:FindFirstChild("HumanoidRootPart")
+			if targetHrp then
+				local distancia = (targetHrp.Position - posicion).Magnitude
+				if distancia <= radio then
+					-- Verificar si está dentro del cono
+					local direccionAlObjetivo = (targetHrp.Position - posicion).Unit
+					local anguloConDireccion = math.deg(math.acos(direccion:Dot(direccionAlObjetivo)))
+
+					if anguloConDireccion <= angulo / 2 then
+						-- Aplicar efectos (más duración con nivel)
+						local duracionVision = 3 + (nivel * 0.5)
+						local duracionControles = 3 + (nivel * 0.3)
+						local duracionVulnerable = 6 + (nivel * 0.8)
+						local factorDano = 1.1 + (nivel * 0.05)
+
+						EstadoManager.AplicarEstado(target, "VisionBorrosa", duracionVision)
+						EstadoManager.AplicarEstado(target, "ControlesInvertidos", duracionControles)
+						EstadoManager.AplicarEstado(target, "Vulnerable", duracionVulnerable, {factorDano = factorDano})
+
+						print("🧠 Esporas aplicadas a: " .. target.Name .. " Nivel " .. nivel)
+					end
+				end
+			end
+		end
+
+		return true
+	end or nil
+}
+
+-- Habilidad 2: Masa Infecciosa (Actualizada con niveles)
+ZombieSkills["2"] = {
+	Nombre = "Masa Infecciosa",
+	Descripcion = "Lanza un proyectil tóxico que crea un charco dañino. Más daño y tamaño con nivel.",
+	Cooldown = 18,
+	Tipo = "Direccion",
+	Execute = RunService:IsServer() and function(character, direccion, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return false end
+
+		print("[ZombieSkills][Masa Infecciosa] Activada por:", character.Name, "Nivel:", nivel)
+
+		-- Crear proyectil
+		local proyectil = Instance.new("Part")
+		proyectil.Size = Vector3.new(1, 1, 1)
+		proyectil.Shape = Enum.PartType.Ball
+		proyectil.BrickColor = BrickColor.new("Br. yellowish green")
+		proyectil.Material = Enum.Material.Slate
+		proyectil.Position = hrp.Position + direccion * 2
+		proyectil.Anchored = false
+		proyectil.CanCollide = false
+		proyectil.Parent = workspace
+
+		-- Propulsión (más velocidad con nivel)
+		local velocidad = 50 + (nivel * 4)
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = direccion * velocidad
+		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+		bv.Parent = proyectil
+
+		-- Activar efecto visual
+		local masaEvent = game.ReplicatedStorage:FindFirstChild("ZombieMasaEvent")
+		if masaEvent then
+			masaEvent:FireAllClients(proyectil, nivel)
+		end
+
+		proyectil.Touched:Connect(function(hit)
+			if hit:IsDescendantOf(character) then return end
+
+			-- Crear charco tóxico (más tamaño con nivel)
+			local tamanioCharco = 8 + (nivel * 1.5)
+			local posicionImpacto = proyectil.Position
+			local charco = Instance.new("Part")
+			charco.Size = Vector3.new(tamanioCharco, 0.2, tamanioCharco)
+			charco.BrickColor = BrickColor.new("Br. yellowish green")
+			charco.Material = Enum.Material.Slate
+			charco.Transparency = 0.5
+			charco.Anchored = true
+			charco.CanCollide = false
+			charco.CFrame = CFrame.new(posicionImpacto)
+			charco.Parent = workspace
+
+			-- Activar efecto visual del charco
+			if masaEvent then
+				masaEvent:FireAllClients("Charco", posicionImpacto, nivel)
+			end
+
+			-- Daño y efectos del charco (más duración y daño con nivel)
+			local duracionCharco = 8 + (nivel * 1)
+			local tiempoInicio = time()
+			local conexion
+			conexion = game:GetService("RunService").Heartbeat:Connect(function()
+				if time() - tiempoInicio >= duracionCharco then
+					conexion:Disconnect()
+					charco:Destroy()
+					return
+				end
+
+				-- Usar la nueva función para obtener enemigos
+				local enemigos = obtenerEnemigos(character)
+				for _, target in ipairs(enemigos) do
+					local targetHrp = target:FindFirstChild("HumanoidRootPart")
+					if targetHrp then
+						local radioCharco = tamanioCharco / 2
+						local distancia = (targetHrp.Position - posicionImpacto).Magnitude
+						if distancia <= radioCharco then
+							-- Aplicar daño (más daño con nivel) y ralentización
+							local dano = 5 + nivel
+							if CombatManager then
+								CombatManager.AplicarDanioSegura(character, target, dano)
+							elseif VidaManager then
+								VidaManager:AplicarDanio(character, target, dano)
+							end
+							EstadoManager.AplicarEstado(target, "Ralentizado", 1, {factor = 0.6})
+						end
+					end
+				end
+			end)
+
+			proyectil:Destroy()
+		end)
+
+		Debris:AddItem(proyectil, 5)
+		return true
+	end or nil
+}
+
+-- Habilidad 3: Abrazo Cadavérico (Versión Final Completa)
+-- Habilidad 3: Abrazo Cadavérico (Versión Final - Con soporte para BloqueadoAtaque)
+ZombieSkills["3"] = {
+	Nombre = "Abrazo Cadavérico",
+	Descripcion = "Selecciona un enemigo para agarrarlo e inmovilizarlo, infligiendo daño periódico.",
+	Cooldown = 30,
+	Tipo = "Seleccion",
+	RequiereAliado = false,
+	Execute = RunService:IsServer() and function(character, objetivo, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return false end
+
+		-- Verificar que el objetivo existe y está en rango
+		if not objetivo or not objetivo:FindFirstChild("HumanoidRootPart") then
+			print("❌ Objetivo no válido para Abrazo Cadavérico")
+			return false
+		end
+
+		local targetHrp = objetivo.HumanoidRootPart
+		local distancia = (hrp.Position - targetHrp.Position).Magnitude
+		local distanciaMaxima = 15 + (nivel * 2)
+
+		if distancia > distanciaMaxima then
+			local notificacionEvent = ReplicatedStorage:FindFirstChild("NotificacionHabilidad")
+			if notificacionEvent then
+				notificacionEvent:FireClient(player, "❌ El objetivo está muy lejos.")
+			end
+			print("❌ Objetivo muy lejos: " .. distancia .. " studs")
+			return false
+		end
+
+		print("[ZombieSkills][Abrazo Cadavérico] Activada por:", character.Name, "Objetivo:", objetivo.Name, "Nivel:", nivel)
+
+		-- 🔒 BLOQUEAR ATAQUES BÁSICOS PERO PERMITIR DAÑO DE HABILIDAD
+		local duracionTotal = 7
+		EstadoManager.AplicarEstado(character, "BloqueadoAtaque", duracionTotal)
+		EstadoManager.AplicarEstado(objetivo, "Aturdido", duracionTotal)
+
+		-- ✨ EFECTO VISUAL INMEDIATO
+		local abrazoEvent = ReplicatedStorage:FindFirstChild("ZombieAbrazoEvent")
+		if abrazoEvent then
+			abrazoEvent:FireAllClients(character, objetivo)
+		end
+
+		-- 🎯 CALCULAR PUNTO DESTINO PRECISO
+		local distanciaAgarre = 2
+		local direccion = (targetHrp.Position - hrp.Position).Unit
+		local destino = targetHrp.Position - (direccion * distanciaAgarre)
+
+		print("🎯 Calculando movimiento - Destino a " .. distanciaAgarre .. " studs del objetivo")
+
+		-- 🚶 MOVER ZOMBIE HACIA EL PUNTO CALCULADO
+		local humanoide = character:FindFirstChildOfClass("Humanoid")
+		local animTrack
+		local conexionMovimiento
+		local conexionDano
+		local agarreIniciado = false
+
+		-- 🛑 FUNCIÓN PARA DETENER ANIMACIÓN
+		local function DetenerAnimacionAgarre()
+			if animTrack then
+				animTrack:Stop()
+				animTrack = nil
+				print("🛑 Animación del agarre detenida")
+			end
+		end
+
+		-- 🧹 FUNCIÓN PARA LIMPIAR ESTADOS
+		local function LimpiarEstados()
+			print("🧹 Iniciando limpieza completa de estados")
+
+			-- Detener animación
+			DetenerAnimacionAgarre()
+
+			-- Desconectar conexiones
+			if conexionMovimiento then
+				conexionMovimiento:Disconnect()
+				conexionMovimiento = nil
+			end
+
+			if conexionDano then
+				conexionDano:Disconnect()
+				conexionDano = nil
+			end
+
+			-- Remover estados
+			EstadoManager.RemoverEstado(character, "Inmovilizado")
+			EstadoManager.RemoverEstado(character, "BloqueadoAtaque")
+			if objetivo and objetivo.Parent then
+				EstadoManager.RemoverEstado(objetivo, "Aturdido")
+			end
+
+			print("✅ Limpieza completa de estados finalizada")
+		end
+
+		-- 🎬 FUNCIÓN PARA INICIAR ANIMACIÓN Y AGARRE
+		local function IniciarAgarreCompleto()
+			if agarreIniciado then return end
+			agarreIniciado = true
+
+			print("🎬 Iniciando agarre completo - Distancia al objetivo: " .. (targetHrp.Position - hrp.Position).Magnitude)
+
+			-- 🔒 INMOVILIZAR AL ZOMBIE (PERO PERMITIR DAÑO DE HABILIDAD)
+			EstadoManager.AplicarEstado(character, "Inmovilizado", duracionTotal)
+
+			-- ANIMACIÓN DEL AGARRE
+			local animationId = "rbxassetid://123253993551953"
+			local anim = Instance.new("Animation")
+			anim.AnimationId = animationId
+			animTrack = humanoide:LoadAnimation(anim)
+			animTrack.Looped = true
+			animTrack:Play()
+
+			-- 🔊 SONIDO DE MORDIDA
+			local sonidoMordidaEvent = ReplicatedStorage:FindFirstChild("ZombieMordidaEvent")
+			if sonidoMordidaEvent then
+				sonidoMordidaEvent:FireAllClients(character, objetivo)
+			end
+
+			-- 💥 DAÑO PERIÓDICO COMO HABILIDAD (ignora BloqueadoAtaque)
+			local danoTotal = 60 + (nivel * 18)
+			local numeroIntervalos = 6
+			local danoPorIntervalo = danoTotal / numeroIntervalos
+			local intervalo = 1.0
+
+			print("💀 Daño total: " .. danoTotal .. " | Por intervalo: " .. danoPorIntervalo)
+
+			local intervalosCompletados = 0
+			local ultimoTiempoDano = time()
+
+			conexionDano = game:GetService("RunService").Heartbeat:Connect(function()
+				-- Verificar si el objetivo sigue vivo
+				if not objetivo or not objetivo.Parent or not objetivo:FindFirstChildOfClass("Humanoid") then
+					print("❌ Objetivo perdido durante el agarre")
+					LimpiarEstados()
+					return
+				end
+
+				local objetivoHumanoide = objetivo:FindFirstChildOfClass("Humanoid")
+				if objetivoHumanoide.Health <= 0 then
+					print("💀 Objetivo murió durante el agarre")
+					LimpiarEstados()
+					return
+				end
+
+				-- Aplicar daño cada intervalo COMO HABILIDAD
+				local tiempoActual = time()
+				if tiempoActual - ultimoTiempoDano >= intervalo and intervalosCompletados < numeroIntervalos then
+					-- 🔥 APLICAR DAÑO COMO HABILIDAD (para ignorar BloqueadoAtaque)
+					if VidaManager then
+						VidaManager:AplicarDanio(character, objetivo, danoPorIntervalo, true) -- true = es habilidad
+						print("💥 Daño de habilidad aplicado: " .. danoPorIntervalo)
+					else
+						warn("❌ VidaManager no disponible")
+					end
+
+					intervalosCompletados = intervalosCompletados + 1
+					ultimoTiempoDano = tiempoActual
+					print("💥 Daño aplicado: " .. danoPorIntervalo .. " (" .. intervalosCompletados .. "/" .. numeroIntervalos .. ")")
+				end
+
+				-- Finalizar después de todos los intervalos
+				if intervalosCompletados >= numeroIntervalos then
+					print("✅ Abrazo Cadavérico completado exitosamente")
+					LimpiarEstados()
+				end
+			end)
+
+			-- TIMEOUT DE SEGURIDAD CON MARGEN
+			task.delay(duracionTotal + 1, function()
+				if conexionDano then
+					print("⏰ Timeout de seguridad alcanzado")
+					LimpiarEstados()
+				end
+			end)
+		end
+
+		-- MOVER ZOMBIE HACIA EL OBJETIVO
+		if humanoide then
+			humanoide:MoveTo(destino)
+			print("🚶 Zombie moviéndose hacia posición calculada")
+		end
+
+		-- DETECCIÓN EN TIEMPO REAL DE LA DISTANCIA
+		conexionMovimiento = game:GetService("RunService").Heartbeat:Connect(function()
+			if not objetivo or not objetivo.Parent then
+				print("❌ Objetivo perdido durante el movimiento")
+				LimpiarEstados()
+				return
+			end
+
+			local distanciaAlDestino = (hrp.Position - destino).Magnitude
+
+			-- Si está lo suficientemente cerca, iniciar agarre
+			if distanciaAlDestino <= 1.5 then
+				conexionMovimiento:Disconnect()
+				conexionMovimiento = nil
+				IniciarAgarreCompleto()
+				print("🎯 Llegó al punto destino - Iniciando agarre")
+			end
+		end)
+
+		-- TIMEOUT DINÁMICO INTELIGENTE
+		local velocidad = humanoide.WalkSpeed or 16
+		local distanciaRecorrer = (hrp.Position - destino).Magnitude
+		local tiempoEstimado = distanciaRecorrer / velocidad
+		local tiempoExtraTolerancia = 3
+		local tiempoTimeout = math.min(math.max(tiempoEstimado + tiempoExtraTolerancia, 3), 8)
+
+		print("⏱️ Timeout dinámico calculado: " .. tiempoTimeout .. "s (Distancia: " .. distanciaRecorrer .. " studs, Velocidad: " .. velocidad .. " studs/s)")
+
+		task.delay(tiempoTimeout, function()
+			if conexionMovimiento then
+				local distanciaActualAlObjetivo = (targetHrp.Position - hrp.Position).Magnitude
+
+				if distanciaActualAlObjetivo <= 5 then
+					print("⚠️ Timeout dinámico - Forzando agarre (distancia: " .. distanciaActualAlObjetivo .. ")")
+					conexionMovimiento:Disconnect()
+					conexionMovimiento = nil
+					IniciarAgarreCompleto()
+				else
+					print("❌ Timeout dinámico - Demasiado lejos (" .. distanciaActualAlObjetivo .. " studs) tras " .. tiempoTimeout .. "s")
+					LimpiarEstados()
+				end
+			end
+		end)
+
+		return true
+	end or nil
+}
+-- Ultimate: El Alzamiento (Actualizada con niveles)
+ZombieSkills["4"] = {
+	Nombre = "El Alzamiento",
+	Descripcion = "Invoca una horda de zombies menores. Más zombies y duración con nivel.",
+	Cooldown = 50,
+	Tipo = "Automatica",
+	Execute = RunService:IsServer() and function(character, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then
+			print("❌ No se pudo invocar zombies: personaje no existe")
+			return false
+		end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then
+			print("❌ No se pudo invocar zombies: HRP no encontrado")
+			return false
+		end
+
+		print("[ZombieSkills][El Alzamiento] Activada por:", character.Name, "Nivel:", nivel)
+
+		-- OBTENER EQUIPO CORRECTAMENTE
+		local equipo = character:GetAttribute("Equipo") or player:GetAttribute("Equipo")
+		print("🏷️ Equipo del invocador:", equipo)
+
+		if not equipo then
+			warn("❌ CRÍTICO: No se pudo obtener el equipo del invocador")
+			local equipoValue = character:FindFirstChild("Equipo") or player:FindFirstChild("Equipo")
+			if equipoValue and equipoValue:IsA("StringValue") then
+				equipo = equipoValue.Value
+			else
+				equipo = "EquipoRojo"
+				warn("⚠️ Usando equipo por defecto:", equipo)
+			end
+		end
+
+		-- Activar efecto visual
+		local alzamientoEvent = game.ReplicatedStorage:FindFirstChild("ZombieAlzamientoEvent")
+		if alzamientoEvent then
+			alzamientoEvent:FireAllClients(character, hrp.Position, nivel)
+		end
+
+		-- Invocar zombies (más cantidad con nivel)
+		local cantidadBase = math.random(5, 8)
+		local cantidadZombies = cantidadBase + math.floor(nivel / 2)  -- +1 zombie cada 2 niveles
+		local tiposZombies = {"Rapido", "Tanque", "Infector"}
+		local zombiesInvocados = {}
+
+		-- Duración base aumenta con nivel
+		local duracionBase = 15 + (nivel * 2)
+		local duracionExtra = 0
+
+		for i = 1, cantidadZombies do
+			local tipo = tiposZombies[math.random(1, 3)]
+			local zombieModel = game.ServerStorage:FindFirstChild("Zombie" .. tipo)
+
+			if zombieModel then
+				-- Posición de spawn bajo tierra
+				local radioSpawn = 10 + (nivel * 1)
+				local posicionSpawn = hrp.Position + Vector3.new(
+					math.random(-radioSpawn, radioSpawn),
+					-3,
+					math.random(-radioSpawn, radioSpawn)
+				)
+
+				local zombie = zombieModel:Clone()
+
+				-- 🔍 ASIGNAR PRIMARYPART DE FORMA SEGURA
+				local primaryPart = zombie:FindFirstChild("HumanoidRootPart") or zombie:FindFirstChildWhichIsA("BasePart")
+				if primaryPart then
+					zombie.PrimaryPart = primaryPart
+				else
+					warn("❌ El modelo de zombie no tiene partes base. No se puede invocar.")
+					zombie:Destroy()
+					continue
+				end
+
+				zombie:SetPrimaryPartCFrame(CFrame.new(posicionSpawn))
+				zombie.Parent = workspace
+
+				-- Hacer que el zombie sea intangible inicialmente
+				for _, part in ipairs(zombie:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.CanCollide = false
+					end
+				end
+
+				-- CONFIGURAR EQUIPO CORRECTAMENTE
+				local equipoZombie = Instance.new("StringValue")
+				equipoZombie.Name = "Equipo"
+				equipoZombie.Value = equipo
+				equipoZombie.Parent = zombie
+
+				zombie:SetAttribute("Equipo", equipo)
+				zombie:SetAttribute("EsInvocado", true)
+				zombie:SetAttribute("Estado", "Emergiendo")
+				zombie:SetAttribute("NivelInvocacion", nivel)  -- 🆕 Nivel de invocación
+
+				-- Referencia al invocador
+				local invocadorRef = Instance.new("ObjectValue")
+				invocadorRef.Name = "Invocador"
+				invocadorRef.Value = character
+				invocadorRef.Parent = zombie
+
+				print("✅ Zombie " .. tipo .. " asignado al equipo: " .. equipo)
+
+				-- Configurar según tipo (mejoras con nivel)
+				local humanoide = zombie:FindFirstChildOfClass("Humanoid")
+				if humanoide then
+					humanoide.WalkSpeed = 0  -- Velocidad 0 mientras emerge
+
+					-- Mejoras de estadísticas según nivel
+					if tipo == "Rapido" then
+						local velocidadBase = 24
+						local vidaBase = 100
+						humanoide.WalkSpeed = velocidadBase + (nivel * 2)  -- Más velocidad con nivel
+						humanoide.MaxHealth = vidaBase + (nivel * 20)
+						humanoide.Health = humanoide.MaxHealth
+						zombie:SetAttribute("EsExplosivo", true)
+						print("✅ Zombie Rápido - Velocidad: " .. humanoide.WalkSpeed .. ", Vida: " .. humanoide.MaxHealth)
+
+					elseif tipo == "Tanque" then
+						local velocidadBase = 16
+						local vidaBase = 400
+						humanoide.WalkSpeed = velocidadBase
+						humanoide.MaxHealth = vidaBase + (nivel * 50)  -- Mucha más vida con nivel
+						humanoide.Health = humanoide.MaxHealth
+						local vida = zombie:FindFirstChild("Vida") or Instance.new("IntValue")
+						vida.Name = "Vida"
+						vida.Value = humanoide.MaxHealth
+						vida.Parent = zombie
+						print("✅ Zombie Tanque - Vida: " .. humanoide.MaxHealth)
+
+					elseif tipo == "Infector" then
+						local velocidadBase = 16
+						local vidaBase = 150
+						humanoide.WalkSpeed = velocidadBase
+						humanoide.MaxHealth = vidaBase + (nivel * 25)
+						humanoide.Health = humanoide.MaxHealth
+						zombie:SetAttribute("AplicaVeneno", true)
+						zombie:SetAttribute("DanoVeneno", 5 + nivel)  -- Más daño de veneno con nivel
+						print("✅ Zombie Infector - Vida: " .. humanoide.MaxHealth)
+					end
+				end
+
+				table.insert(zombiesInvocados, zombie)
+				print("🧟 Zombie " .. tipo .. " invocado #" .. i)
+
+				-- Animación de salida del suelo
+				task.spawn(function()
+					task.wait(0.5 + (i * 0.2))
+
+					if not zombie or not zombie.Parent or not zombie.PrimaryPart then
+						warn("⚠️ Zombie #" .. i .. " fue destruido antes de emerger")
+						return
+					end
+
+					-- Mover zombie a la superficie
+					local objetivoPos = Vector3.new(posicionSpawn.X, 0, posicionSpawn.Z)
+					local tween = TweenService:Create(
+						zombie.PrimaryPart,
+						TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						{Position = objetivoPos}
+					)
+					tween:Play()
+
+					-- Esperar a que termine el tween y hacer tangible
+					tween.Completed:Connect(function()
+						if zombie and zombie.Parent then
+							for _, part in ipairs(zombie:GetDescendants()) do
+								if part:IsA("BasePart") then
+									part.CanCollide = true
+								end
+							end
+
+							-- RESTAURAR VELOCIDAD NORMAL Y CAMBIAR ESTADO
+							local humanoide = zombie:FindFirstChildOfClass("Humanoid")
+							if humanoide then
+								zombie:SetAttribute("Estado", "Activo")
+								print("✅ Zombie #" .. i .. " ha emergido y está activo")
+							end
+						end
+					end)
+				end)
+
+				-- Conectar muerte para extender duración
+				local humanoideZombie = zombie:FindFirstChildOfClass("Humanoid")
+				if humanoideZombie then
+					humanoideZombie.Died:Connect(function()
+						if duracionExtra < 9 then
+							duracionExtra = duracionExtra + 3
+							print("⏰ Duración extendida: +3s (Total: " .. (duracionBase + duracionExtra) .. "s)")
+						end
+					end)
+				end
+			else
+				warn("❌ No se encontró el modelo: Zombie" .. tipo)
+			end
+		end
+
+		print("🧟‍♂️ " .. #zombiesInvocados .. " zombies invocados. Duración: " .. duracionBase .. "s + " .. duracionExtra .. "s")
+
+		-- Sistema de marcado de objetivo
+		local objetivoMarcado = nil
+		local tiempoInicio = time()
+
+		-- Usar Heartbeat para el seguimiento
+		local conexionSeguimiento
+		conexionSeguimiento = game:GetService("RunService").Heartbeat:Connect(function()
+			if time() - tiempoInicio >= duracionBase + duracionExtra then
+				print("⏰ Tiempo de la ultimate agotado. Eliminando zombies.")
+				conexionSeguimiento:Disconnect()
+				-- Eliminar zombies al finalizar
+				for _, zombie in ipairs(zombiesInvocados) do
+					if zombie and zombie.Parent then
+						-- Animación de hundimiento antes de destruir
+						if zombie.PrimaryPart then
+							local tween = TweenService:Create(
+								zombie.PrimaryPart,
+								TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+								{Position = zombie.PrimaryPart.Position - Vector3.new(0, 3, 0)}
+							)
+							tween:Play()
+							tween.Completed:Connect(function()
+								if zombie and zombie.Parent then
+									zombie:Destroy()
+								end
+							end)
+						else
+							zombie:Destroy()
+						end
+					end
+				end
+				return
+			end
+
+			-- Buscar objetivo al que el zombie esté mirando
+			local ray = Ray.new(hrp.Position, hrp.CFrame.LookVector * 20)
+			local hit, position = workspace:FindPartOnRay(ray, character)
+
+			if hit then
+				local modelo = hit:FindFirstAncestorOfClass("Model")
+				if modelo and modelo:FindFirstChildOfClass("Humanoid") then
+					if EquipoManager and EquipoManager.SonEnemigos(character, modelo) then
+						objetivoMarcado = modelo
+					end
+				end
+			end
+
+			-- Dirigir zombies al objetivo marcado (SOLO SI ESTÁN ACTIVOS)
+			if objetivoMarcado and objetivoMarcado:FindFirstChild("HumanoidRootPart") then
+				for _, zombie in ipairs(zombiesInvocados) do
+					if zombie and zombie.Parent and zombie:FindFirstChildOfClass("Humanoid") and zombie.PrimaryPart then
+						if zombie:GetAttribute("Estado") == "Activo" then
+							local humanoideZombie = zombie:FindFirstChildOfClass("Humanoid")
+							if humanoideZombie and zombie.PrimaryPart and (zombie.PrimaryPart.Position.Y >= -0.5) then
+								humanoideZombie:MoveTo(objetivoMarcado.HumanoidRootPart.Position)
+							end
+						end
+					end
+				end
+			end
+		end)
+
+		return true
+	end or nil
+}
+
+return ZombieSkills
