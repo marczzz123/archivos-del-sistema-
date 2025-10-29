@@ -1,0 +1,131 @@
+-- LocalScript GENERAL para todos los animales
+local function setupAnimal(animal)
+	-- Determinar tipo de animal por el evento remoto
+	local event = animal:FindFirstChild("TigreEvent") or animal:FindFirstChild("ConejoEvent")
+	if not event then
+		return
+	end
+
+	local animalType = event.Name == "TigreEvent" and "Tigre" or "Conejo"
+
+	local animationController = animal:FindFirstChild("AnimationController")
+	if not animationController then
+		warn("❌ No se encontró AnimationController en: " .. animal.Name)
+		return
+	end
+
+	local animator = animationController:FindFirstChild("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = animationController
+	end
+
+	local walkTrack, actionTrack
+
+	-- Cargar animación de Caminar
+	local walkAnimation = animal:FindFirstChild("Caminar")
+	if walkAnimation and walkAnimation:IsA("Animation") then
+		local success, result = pcall(function()
+			return animator:LoadAnimation(walkAnimation)
+		end)
+
+		if success then
+			walkTrack = result
+			walkTrack.Looped = true
+			print("✅ Animación Caminar cargada para: " .. animal.Name .. " (" .. animalType .. ")")
+		else
+			warn("❌ Error cargando Caminar: " .. tostring(result))
+		end
+	end
+
+	-- Cargar animación de acción (Asustarse para tigre, Comer para conejo)
+	local actionAnimationName = animalType == "Tigre" and "Asustarse" or "Comer"
+	local actionAnimation = animal:FindFirstChild(actionAnimationName)
+	if actionAnimation and actionAnimation:IsA("Animation") then
+		local success, result = pcall(function()
+			return animator:LoadAnimation(actionAnimation)
+		end)
+
+		if success then
+			actionTrack = result
+			actionTrack.Looped = false
+			print("✅ Animación " .. actionAnimationName .. " cargada para: " .. animal.Name .. " (" .. animalType .. ")")
+		else
+			warn("❌ Error cargando " .. actionAnimationName .. ": " .. tostring(result))
+		end
+	end
+
+	-- Escuchar eventos del servidor
+	event.OnClientEvent:Connect(function(action, state)
+		if action == "Caminar" then
+			if walkTrack then
+				if state then
+					if actionTrack and actionTrack.IsPlaying then
+						actionTrack:Stop()
+						print("🐾 CLIENTE: Deteniendo " .. actionAnimationName .. ", iniciando Caminar")
+					end
+					if not walkTrack.IsPlaying then
+						walkTrack:Play()
+						print("🐾 CLIENTE: Animación Caminar INICIADA - " .. animalType)
+					end
+				else
+					if walkTrack.IsPlaying then
+						walkTrack:Stop()
+						print("🐾 CLIENTE: Animación Caminar DETENIDA - " .. animalType)
+					end
+				end
+			end
+
+		elseif action == "Asustarse" or action == "Comer" then
+			if actionTrack then
+				if state then
+					if walkTrack and walkTrack.IsPlaying then
+						walkTrack:Stop()
+						print("🐾 CLIENTE: Deteniendo Caminar, iniciando " .. actionAnimationName .. " - " .. animalType)
+					end
+					if not actionTrack.IsPlaying then
+						actionTrack:Play()
+						print("🐾 CLIENTE: Animación " .. actionAnimationName .. " INICIADA - " .. animalType)
+					end
+				else
+					if actionTrack.IsPlaying then
+						actionTrack:Stop()
+						print("🐾 CLIENTE: Animación " .. actionAnimationName .. " DETENIDA - " .. animalType)
+					end
+				end
+			end
+
+		elseif action == "Apuntar" then
+			print("🎯 CLIENTE: Evento Apuntar recibido - " .. animalType)
+			-- Solo para conejos
+
+		elseif action == "Comer" and animalType == "Conejo" then
+			print("🥕 CLIENTE: Evento Comer recibido - Conejo")
+		end
+	end)
+
+	print("✅ Sistema de animaciones configurado para: " .. animal.Name .. " (" .. animalType .. ")")
+end
+
+-- Conectar animales existentes
+print("🔍 Buscando animales existentes...")
+for _, obj in ipairs(workspace:GetChildren()) do
+	if obj:FindFirstChild("TigreEvent") or obj:FindFirstChild("ConejoEvent") then
+		local animalType = obj:FindFirstChild("TigreEvent") and "Tigre" or "Conejo"
+		print("🐾 Configurando " .. animalType .. ": " .. obj.Name)
+		task.wait(1)
+		setupAnimal(obj)
+	end
+end
+
+-- Conectar nuevos animales
+workspace.ChildAdded:Connect(function(child)
+	if child:FindFirstChild("TigreEvent") or child:FindFirstChild("ConejoEvent") then
+		local animalType = child:FindFirstChild("TigreEvent") and "Tigre" or "Conejo"
+		print("🐾 Nuevo " .. animalType .. " detectado: " .. child.Name)
+		task.wait(2)
+		setupAnimal(child)
+	end
+end)
+
+print("🎯 LocalScript GENERAL de animaciones iniciado correctamente")
