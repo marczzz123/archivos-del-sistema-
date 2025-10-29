@@ -1,0 +1,295 @@
+local BasicAttacks = {}
+
+-- Cargar módulos
+local Players = game:GetService("Players")
+local CombatManager = require(game.ServerScriptService:WaitForChild("CombatManager"))
+local BasicAttackCooldown = require(game.ServerScriptService:WaitForChild("BasicAttackCooldown"))
+local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+
+-- 🚫 FUNCIÓN: Verificar si el personaje puede atacar
+local function personajePuedeAtacar(character)
+	if not character then return false end
+
+	-- 🌀 Verificar si está aturdido
+	if EstadoManager.TieneEstado(character, "Aturdido") then
+		print("🌀 " .. character.Name .. " está aturdido, no puede atacar")
+		return false
+	end
+
+	-- 🛡️ Verificar si está bloqueado de ataque
+	if EstadoManager.TieneEstado(character, "BloqueadoAtaque") then
+		print("🛡️ " .. character.Name .. " está bloqueado, no puede atacar")
+		return false
+	end
+
+	return true
+end
+
+-- Helper: Calculate level-based damage multiplier
+local function getLevelMultiplier(character)
+	local nivel = character:GetAttribute("Nivel") or 1
+	local scalingFactor = 0.05 -- 5% extra damage per level above 1
+	return 1 + ((nivel - 1) * scalingFactor)
+end
+
+-- ⚡ FUNCIÓN UNIFICADA PARA VERIFICAR ATAQUES
+local function puedeAtacarObjetivo(atacante, objetivo)
+	-- 🔍 Resolver modelo del objetivo
+	local targetModel = objetivo
+	if objetivo:IsA("BasePart") or objetivo:IsA("MeshPart") then
+		targetModel = objetivo:FindFirstChildOfClass("Model") or objetivo.Parent
+	elseif objetivo:IsA("Humanoid") then
+		targetModel = objetivo.Parent
+	end
+
+	if not targetModel then return false end
+
+	-- ✅ USAR EQUIPOMANGER PARA VERIFICACIÓN CORRECTA
+	return EquipoManager.PuedeAtacar(atacante, targetModel)
+end
+
+-- 🔥 FUNCIÓN DE ATAQUE BÁSICO QUE USA TU SISTEMA DE DAÑO POR FUERZA
+local function ejecutarAtaqueBasico(character, aplicarStun, multiplicadorFuerza)
+	-- Verificar cooldown antes de atacar
+	if not BasicAttackCooldown.canAttack(character) then
+		return
+	end
+
+	-- 🚫 VERIFICAR SI EL PERSONAJE PUEDE ATACAR
+	if not personajePuedeAtacar(character) then
+		return
+	end
+
+	local player = game.Players:GetPlayerFromCharacter(character)
+	if not player then return end
+
+	-- 🎯 CALCULAR DAÑO BASADO EN FUERZA (tu sistema)
+	local fuerza = character:GetAttribute("Fuerza") or 0
+	local nivelMultiplier = getLevelMultiplier(character)
+	local multiplicador = multiplicadorFuerza or 1.0
+	local danioBase = math.floor(fuerza * multiplicador * nivelMultiplier)
+
+	print("⚔️ [BasicAttack] Ataque básico de " .. character.Name .. " - Daño: " .. danioBase)
+
+	-- 🔥 EJECUTAR HITBOX RÁPIDO - CombatManager se encargará del daño usando tu sistema
+	CombatManager.HitboxRapido(player, danioBase, aplicarStun)
+end
+
+-- 🎯 ATAQUES BÁSICOS POR PERSONAJE (RESPETANDO TU SISTEMA DE DAÑO POR FUERZA)
+
+-- ⚔️ Spartan - golpe fuerte con stun
+BasicAttacks["Spartan"] = function(character, target)
+	-- Verificar cooldown antes de atacar
+	if not BasicAttackCooldown.canAttack(character) then
+		return
+	end
+
+	-- 🚫 VERIFICAR SI EL PERSONAJE PUEDE ATACAR
+	if not personajePuedeAtacar(character) then
+		return
+	end
+
+	print("⚔️ Spartan basic attack fue llamado.")
+
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player or not target then
+		print("❌ No hay player o target para Spartan.")
+		return
+	end
+
+	-- 🚫 VERIFICACIÓN CON EQUIPOMANGER
+	if not puedeAtacarObjetivo(character, target) then
+		print("❌ Spartan no puede atacar a este objetivo (aliado o inválido)")
+		return
+	end
+
+	-- 🔍 Resolver modelo del target
+	local targetModel = target
+	if target:IsA("BasePart") or target:IsA("MeshPart") then
+		targetModel = target:FindFirstChildOfClass("Model") or target.Parent
+	elseif target:IsA("Humanoid") then
+		targetModel = target.Parent
+	end
+
+	if not targetModel then
+		print("❌ No se pudo encontrar el modelo del objetivo")
+		return
+	end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local targetHRP = targetModel and (targetModel:FindFirstChild("HumanoidRootPart") or targetModel.PrimaryPart)
+	if not hrp or not targetHRP then
+		print("❌ No se encontró HumanoidRootPart en alguno.")
+		return
+	end
+
+	local distance = (hrp.Position - targetHRP.Position).Magnitude
+	if distance > 6 then
+		print("📍 Objetivo fuera de alcance.")
+		return
+	end
+
+	-- 🧠 Calcular daño según Fuerza y Nivel
+	local fuerza = character:GetAttribute("Fuerza") or 0
+	local nivelMultiplier = getLevelMultiplier(character)
+	local danioBase = math.floor(fuerza * 1.2 * nivelMultiplier)
+
+	-- Usar el sistema de hitbox rápido en lugar de daño directo
+	CombatManager.HitboxRapido(player, danioBase, true) -- Stun aplicado
+	print("💥 Spartan HitboxRapido activado - Daño: " .. danioBase)
+
+	-- 🔥 Verificar si está activo el buff antes de aplicar daño en área
+	local status = character:FindFirstChild("LlamasDelOlimpoActivas")
+	if status then
+		local radius = 6
+		print("🔥 Daño en área por Llamas del Olimpo...")
+
+		for _, otherCharacter in pairs(workspace:GetChildren()) do
+			if otherCharacter:IsA("Model") and otherCharacter ~= character then
+				local otherHRP = otherCharacter:FindFirstChild("HumanoidRootPart") or otherCharacter.PrimaryPart
+				if otherHRP then
+					local dist = (targetHRP.Position - otherHRP.Position).Magnitude
+					if dist <= radius then
+						-- ✅ USAR EQUIPOMANGER PARA DAÑO EN ÁREA
+						if EquipoManager.PuedeAtacar(character, otherCharacter) then
+							local areaDanio = math.floor(fuerza * 0.5 * nivelMultiplier)
+							-- Usar daño directo para área (o podrías crear otro hitbox)
+							CombatManager.AplicarDanioSegura(player, otherCharacter, areaDanio)
+							print("🔥 Daño en área a:", otherCharacter.Name, "(", areaDanio, ")")
+						else
+							print("⛔ Daño en área evitado a aliado:", otherCharacter.Name)
+						end
+					end
+				end
+			end
+		end
+	else
+		print("🧯 Llamas del Olimpo no activas, no se aplica daño en área.")
+	end
+end
+
+-- 🗡️ Nythera - ataque rápido sin stun
+BasicAttacks["Nythera"] = function(character, target)
+	ejecutarAtaqueBasico(character, false, 1.0) -- Sin stun, multiplicador 1.0
+end
+
+-- 🏃 Sonic - ataque muy rápido
+BasicAttacks["Sonic"] = function(character, target)
+	ejecutarAtaqueBasico(character, false, 1.0) -- Sin stun, multiplicador 1.0
+end
+
+-- 🐉 DragonYinYan - ataque medio con chance de stun
+BasicAttacks["DragonYinYan"] = function(character, target)
+	-- Verificar cooldown antes de atacar
+	if not BasicAttackCooldown.canAttack(character) then
+		return
+	end
+
+	-- 🚫 VERIFICAR SI EL PERSONAJE PUEDE ATACAR
+	if not personajePuedeAtacar(character) then
+		return
+	end
+
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player or not target then return end
+
+	-- 🚫 VERIFICACIÓN CON EQUIPOMANGER
+	if not puedeAtacarObjetivo(character, target) then
+		print("❌ DragonYinYan no puede atacar a este objetivo (aliado o inválido)")
+		return
+	end
+
+	-- 🔍 Resolver modelo del target
+	local targetModel = target
+	if target:IsA("BasePart") or target:IsA("MeshPart") then
+		targetModel = target:FindFirstAncestorOfClass("Model") or target.Parent
+	elseif target:IsA("Humanoid") then
+		targetModel = target.Parent
+	end
+
+	if not targetModel then return end
+
+	local fuerza = character:GetAttribute("Fuerza") or 0
+	local nivelMultiplier = getLevelMultiplier(character)
+	local danioBase = math.floor(fuerza * 1.0 * nivelMultiplier)
+
+	-- 50% de probabilidad de stun
+	local aplicarStun = math.random() > 0.5
+
+	-- 🔥 NUEVO: Aplicar marca Yin-Yang si la habilidad 3 está activa
+	local marcaAplicada = false
+	local DragonYinYanModule = require(game.ReplicatedStorage.Habilidades.DragonYinYanModule)
+	if DragonYinYanModule.AplicarMarcaDesdeAtaqueBasico then
+		marcaAplicada = DragonYinYanModule.AplicarMarcaDesdeAtaqueBasico(character, targetModel, character:GetAttribute("Habilidad3Nivel") or 1)
+	end
+
+	-- Solo aplicar hitbox si no se aplicó marca (la marca ya incluye daño)
+	if not marcaAplicada then
+		CombatManager.HitboxRapido(player, danioBase, aplicarStun)
+	end
+
+	print("🗡️ DragonYinYan basic attack:" .. (marcaAplicada and " (con marca)" : (aplicarStun and " (con stun)" : "")), danioBase)
+end
+
+-- 🕶️ Blacktor - ataque sigiloso con bonus
+BasicAttacks["Blacktor"] = function(character, target)
+	-- Verificar cooldown antes de atacar
+	if not BasicAttackCooldown.canAttack(character) then
+		return
+	end
+
+	-- 🚫 VERIFICAR SI EL PERSONAJE PUEDE ATACAR
+	if not personajePuedeAtacar(character) then
+		return
+	end
+
+	print("⚔️ Blacktor ATTACK DEBUG")
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player or not target then return end
+
+	-- 🚫 VERIFICACIÓN CON EQUIPOMANGER
+	if not puedeAtacarObjetivo(character, target) then
+		print("❌ Blacktor no puede atacar a este objetivo (aliado o inválido)")
+		return
+	end
+
+	-- 🔍 Resolver modelo del target
+	local targetModel = target
+	if target:IsA("BasePart") or target:IsA("MeshPart") then
+		targetModel = target:FindFirstAncestorOfClass("Model") or target.Parent
+	elseif target:IsA("Humanoid") then
+		targetModel = target.Parent
+	end
+
+	if not targetModel then return end
+
+	-- 🧠 Calcular daño según Fuerza y Nivel
+	local fuerza = character:GetAttribute("Fuerza") or 0
+	local nivelMultiplier = getLevelMultiplier(character)
+	local danioBase = math.floor(fuerza * 1.0 * nivelMultiplier)
+
+	-- 🔥 BONUS DE DAÑO POR SIGILO
+	if character:GetAttribute("SigiloActivo") then
+		danioBase = math.floor(danioBase * 1.75) -- +75% de daño
+		print("🗡️ Ataque sigiloso de Blacktor! Daño:", danioBase)
+		character:SetAttribute("SigiloActivo", false)
+	end
+
+	CombatManager.HitboxRapido(player, danioBase, false) -- Sin stun
+	print("🗡️ Blacktor basic attack:", danioBase)
+end
+
+-- 🧟 Zombie - ataque lento pero con stun
+BasicAttacks["Zombie"] = function(character, target)
+	ejecutarAtaqueBasico(character, true, 1.1) -- Con stun, multiplicador 1.1
+end
+
+-- ✨ Mireya - ataque mágico débil
+BasicAttacks["Mireya"] = function(character, target)
+	ejecutarAtaqueBasico(character, false, 0.7) -- Sin stun, multiplicador 0.7
+end
+
+-- 🔍 DEBUG: Verificar que el módulo se carga
+print("🔄 BasicAttacks module cargado - Sistema de hitboxes rápidos integrado con daño por Fuerza")
+
+return BasicAttacks
