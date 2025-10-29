@@ -1,0 +1,282 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+-- Configuraciones
+local ItemsConfig = require(ReplicatedStorage.Modulos:WaitForChild("ItemsConfig"))
+
+-- RemoteEvents
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local ComprarItemRE = RemoteEvents:WaitForChild("ComprarItem")
+local EquiparItemRE = RemoteEvents:WaitForChild("EquiparItem")
+local DesequiparItemRE = RemoteEvents:WaitForChild("DesequiparItem")
+local ActualizarInventarioRE = RemoteEvents:WaitForChild("ActualizarInventario")
+local FeedbackCompraRE = RemoteEvents:WaitForChild("FeedbackCompra")
+local RecalcularStatsRE = RemoteEvents:WaitForChild("RecalcularStats")
+local StatsUpdatedRE = RemoteEvents:WaitForChild("StatsUpdated")
+local IniciarUIStatsRE = RemoteEvents:WaitForChild("IniciarUIStats")
+
+local UsarItemRE = RemoteEvents:FindFirstChild("UsarItem") or Instance.new("RemoteEvent")
+UsarItemRE.Name = "UsarItem"
+UsarItemRE.Parent = RemoteEvents
+
+local FeedbackUsoRE = RemoteEvents:FindFirstChild("FeedbackUso") or Instance.new("RemoteEvent")
+FeedbackUsoRE.Name = "FeedbackUso"
+FeedbackUsoRE.Parent = RemoteEvents
+
+local GanarOroRE = RemoteEvents:FindFirstChild("GanarOro") or Instance.new("RemoteEvent")
+GanarOroRE.Name = "GanarOro"
+GanarOroRE.Parent = RemoteEvents
+
+-- Inventario en memoria
+local inventarios = {}
+
+----------------------------------------------------------------
+-- Funciones auxiliares
+----------------------------------------------------------------
+local function getInventario(player)
+	if not inventarios[player] then
+		inventarios[player] = {}
+	end
+	return inventarios[player]
+end
+
+local function recalcularStats(player)
+	local character = player.Character
+	if not character then return end
+
+	local baseFuerza = player:GetAttribute("BaseFuerza") or 0
+	local baseDefensa = player:GetAttribute("BaseDefensa") or 0
+	local baseVidaMax = player:GetAttribute("BaseVidaMax") or 0
+
+	player:SetAttribute("BaseFuerza", baseFuerza)
+	player:SetAttribute("BaseDefensa", baseDefensa)
+	player:SetAttribute("BaseVidaMax", baseVidaMax)
+	character:SetAttribute("BaseFuerza", baseFuerza)
+	character:SetAttribute("BaseDefensa", baseDefensa)
+	character:SetAttribute("BaseVidaMax", baseVidaMax)
+
+	local totalFuerza = baseFuerza
+	local totalDefensa = baseDefensa
+	local totalVidaMax = baseVidaMax
+
+	local inv = getInventario(player)
+	for nombreItem, datos in pairs(inv) do
+		if datos.equipado and ItemsConfig[nombreItem] and ItemsConfig[nombreItem].Tipo == "equipable" then
+			local atributos = ItemsConfig[nombreItem].Atributos or {}
+			totalFuerza += atributos.Fuerza or 0
+			totalDefensa += atributos.Defensa or 0
+			totalVidaMax += atributos.VidaMax or 0
+		end
+	end
+
+	character:SetAttribute("Fuerza", totalFuerza)
+	character:SetAttribute("Defensa", totalDefensa)
+	character:SetAttribute("VidaMax", totalVidaMax)
+	player:SetAttribute("Fuerza", totalFuerza)
+	player:SetAttribute("Defensa", totalDefensa)
+	player:SetAttribute("VidaMax", totalVidaMax)
+
+	StatsUpdatedRE:FireClient(player, {
+		Fuerza = totalFuerza,
+		Defensa = totalDefensa,
+		VidaMax = totalVidaMax
+	})
+
+	if not player:GetAttribute("UIStatsReady") then
+		player:SetAttribute("UIStatsReady", true)
+		IniciarUIStatsRE:FireClient(player)
+	end
+end
+
+----------------------------------------------------------------
+-- Manejo de items usables y colocables
+----------------------------------------------------------------
+UsarItemRE.OnServerEvent:Connect(function(player, nombreItem)
+	local datosItem = ItemsConfig[nombreItem]
+	local inventario = getInventario(player)
+
+	if not datosItem or not inventario[nombreItem] then
+		FeedbackUsoRE:FireClient(player, nombreItem, false, "Item no válido")
+		return
+	end
+
+	if datosItem.Tipo ~= "usable" and datosItem.Tipo ~= "colocable" then
+		FeedbackUsoRE:FireClient(player, nombreItem, false, "Item no usable")
+		return
+	end
+
+	if not inventario[nombreItem].cantidad or inventario[nombreItem].cantidad <= 0 then
+		FeedbackUsoRE:FireClient(player, nombreItem, false, "No quedan items")
+		return
+	end
+
+	inventario[nombreItem].cantidad -= 1
+	if inventario[nombreItem].cantidad <= 0 then
+		inventario[nombreItem] = nil
+	end
+
+	if datosItem.Tipo == "usable" then
+		local character = player.Character
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				local curacion = datosItem.Cura or 0
+				humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + curacion)
+				FeedbackUsoRE:FireClient(player, nombreItem, true, "Recuperaste " .. curacion .. " de vida")
+			end
+		end
+	elseif datosItem.Tipo == "colocable" then
+		local character = player.Character
+		if character then
+			local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+			if humanoidRootPart then
+				local itemsUsables = ReplicatedStorage:FindFirstChild("ItemsUsables")
+				if itemsUsables then
+					local modeloItem = itemsUsables:FindFirstChild(datosItem.ModeloUsable or nombreItem)
+					if modeloItem then
+						local clonModelo = modeloItem:Clone()
+						clonModelo.Parent = workspace
+						local placementCFrame = humanoidRootPart.CFrame * CFrame.new(0, 0, -5)
+						clonModelo:SetPrimaryPartCFrame(placementCFrame)
+
+						if datosItem.Duracion then
+							task.delay(datosItem.Duracion, function()
+								if clonModelo and clonModelo.Parent then
+									clonModelo:Destroy()
+								end
+							end)
+						end
+
+						FeedbackUsoRE:FireClient(player, nombreItem, true, "Item colocado")
+					else
+						FeedbackUsoRE:FireClient(player, nombreItem, false, "Modelo no encontrado")
+					end
+				else
+					FeedbackUsoRE:FireClient(player, nombreItem, false, "Error del sistema")
+				end
+			else
+				FeedbackUsoRE:FireClient(player, nombreItem, false, "Error de personaje")
+			end
+		else
+			FeedbackUsoRE:FireClient(player, nombreItem, false, "Personaje no encontrado")
+		end
+	end
+
+	ActualizarInventarioRE:FireClient(player, inventario)
+end)
+
+----------------------------------------------------------------
+-- Eventos de compra y equipamiento
+----------------------------------------------------------------
+ComprarItemRE.OnServerEvent:Connect(function(player, nombreItem)
+	local datosItem = ItemsConfig[nombreItem]
+	if not datosItem then
+		FeedbackCompraRE:FireClient(player, nombreItem, false, "Item no existe")
+		return
+	end
+
+	local inventario = getInventario(player)
+	if inventario[nombreItem] ~= nil then
+		FeedbackCompraRE:FireClient(player, nombreItem, false, "Ya tienes este item")
+		return
+	end
+
+	local goldFolder = player:FindFirstChild("leaderstats")
+	if not goldFolder then
+		FeedbackCompraRE:FireClient(player, nombreItem, false, "Error del sistema")
+		return
+	end
+
+	local goldValue = goldFolder:FindFirstChild("Gold")
+	if not goldValue then
+		FeedbackCompraRE:FireClient(player, nombreItem, false, "Error del sistema")
+		return
+	end
+
+	local gold = goldValue.Value
+	if gold < datosItem.Precio then
+		FeedbackCompraRE:FireClient(player, nombreItem, false, "No tienes suficiente Gold")
+		return
+	end
+
+	goldValue.Value = gold - datosItem.Precio
+
+	if datosItem.Tipo == "equipable" then
+		inventario[nombreItem] = {equipado = false}
+	elseif datosItem.Tipo == "usable" or datosItem.Tipo == "colocable" then
+		inventario[nombreItem] = {cantidad = 1}
+	end
+
+	ActualizarInventarioRE:FireClient(player, inventario)
+	FeedbackCompraRE:FireClient(player, nombreItem, true, "Compra realizada ✅")
+end)
+
+EquiparItemRE.OnServerEvent:Connect(function(player, nombreItem)
+	local inventario = getInventario(player)
+	local datosItem = ItemsConfig[nombreItem]
+	if not datosItem or not inventario[nombreItem] then return end
+	if datosItem.Tipo ~= "equipable" then return end
+
+	inventario[nombreItem].equipado = true
+	recalcularStats(player)
+	ActualizarInventarioRE:FireClient(player, inventario)
+end)
+
+DesequiparItemRE.OnServerEvent:Connect(function(player, nombreItem)
+	local inventario = getInventario(player)
+	local datosItem = ItemsConfig[nombreItem]
+	if not datosItem or not inventario[nombreItem] then return end
+	if datosItem.Tipo ~= "equipable" then return end
+
+	inventario[nombreItem].equipado = false
+	recalcularStats(player)
+	ActualizarInventarioRE:FireClient(player, inventario)
+end)
+
+RecalcularStatsRE.OnServerEvent:Connect(function(player)
+	recalcularStats(player)
+end)
+
+----------------------------------------------------------------
+-- Manejo de jugadores y personajes
+----------------------------------------------------------------
+local function onCharacterAdded(character)
+	local player = Players:GetPlayerFromCharacter(character)
+	if player then
+		task.wait(1)
+		ActualizarInventarioRE:FireClient(player, getInventario(player))
+	end
+end
+
+local function initializePlayer(player)
+	if not player:FindFirstChild("leaderstats") then
+		player:WaitForChild("leaderstats")
+	end
+	ActualizarInventarioRE:FireClient(player, getInventario(player))
+	player.CharacterAdded:Connect(onCharacterAdded)
+	if player.Character then
+		task.spawn(onCharacterAdded, player.Character)
+	end
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(initializePlayer, player)
+end
+
+Players.PlayerAdded:Connect(initializePlayer)
+
+Players.PlayerRemoving:Connect(function(player)
+	inventarios[player] = nil
+	player:SetAttribute("BaseFuerza", nil)
+	player:SetAttribute("BaseDefensa", nil)
+	player:SetAttribute("BaseVidaMax", nil)
+	player:SetAttribute("Fuerza", nil)
+	player:SetAttribute("Defensa", nil)
+	player:SetAttribute("VidaMax", nil)
+	player:SetAttribute("UIStatsReady", false)
+end)
+
+return {
+	recalcularStats = recalcularStats,
+	getInventario = getInventario
+}
