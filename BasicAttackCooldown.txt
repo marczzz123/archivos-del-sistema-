@@ -1,0 +1,135 @@
+-- 📁 ModuleScript en ServerScriptService
+local BasicAttackCooldown = {}
+
+local cooldowns = {}
+
+-- 🎯 CONFIGURACIÓN DE COOLDOWNS POR PERSONAJE (ACTUALIZADO)
+local cooldownTimes = {
+	Spartan = 0.8,
+	Nythera = 0.6,
+	Sonic = 0.5,
+	DragonYinYan = 0.7,
+	Blacktor = 0.6,
+	Zombie = 0.6,
+	Mireya = 0.7
+	-- Los personajes no listados usarán 0.7 por defecto
+}
+
+-- 🎯 Función para obtener nombre del personaje desde atributo
+local function obtenerNombrePersonaje(character)
+	if not character then return "Default" end
+
+	-- Primero intentar con el atributo NombrePersonaje
+	local nombrePersonaje = character:GetAttribute("NombrePersonaje")
+	if nombrePersonaje then
+		return nombrePersonaje
+	end
+
+	-- Fallback al nombre del modelo
+	return character.Name
+end
+
+function BasicAttackCooldown.canAttack(character)
+	if not character then 
+		print("❌ [Cooldown] Character es nulo")
+		return false 
+	end
+
+	local characterName = obtenerNombrePersonaje(character)
+	local now = os.clock()
+
+	-- 🆕 VERIFICACIÓN DE ESTADOS QUE BLOQUEAN ATAQUES
+	local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+
+	-- ❌ Si está aturdido, no puede atacar
+	if EstadoManager.TieneEstado(character, "Aturdido") then
+		print("🌀 [Cooldown] " .. characterName .. " está aturdido, ataque bloqueado")
+		return false
+	end
+
+	-- ❌ Si está bloqueado de ataque, no puede atacar
+	if EstadoManager.TieneEstado(character, "BloqueadoAtaque") then
+		print("🛡️ [Cooldown] " .. characterName .. " está bloqueado, ataque bloqueado")
+		return false
+	end
+
+	-- ✅ Si no tiene cooldown registrado, puede atacar
+	if not cooldowns[characterName] then
+		cooldowns[characterName] = now
+		print("✅ [Cooldown] " .. characterName .. " puede atacar (sin cooldown previo)")
+		return true
+	end
+
+	-- 🎯 Verificar si ha pasado el tiempo de cooldown
+	local cooldownTime = cooldownTimes[characterName] or 0.7 -- Valor por defecto
+
+	if now - cooldowns[characterName] >= cooldownTime then
+		cooldowns[characterName] = now
+		print("✅ [Cooldown] " .. characterName .. " puede atacar (cooldown completado)")
+		return true
+	end
+
+	-- ❌ Todavía en cooldown
+	local tiempoRestante = cooldownTime - (now - cooldowns[characterName])
+	print("⏳ [Cooldown] " .. characterName .. " en cooldown: " .. string.format("%.2f", tiempoRestante) .. "s restantes")
+	return false
+end
+
+-- 🆕 FUNCIÓN: Obtener tiempo restante de cooldown (para UI)
+function BasicAttackCooldown.getCooldownRemaining(character)
+	if not character then return 0 end
+
+	local characterName = obtenerNombrePersonaje(character)
+	local now = os.clock()
+
+	if not cooldowns[characterName] then
+		return 0
+	end
+
+	local cooldownTime = cooldownTimes[characterName] or 0.7
+	local tiempoRestante = cooldownTime - (now - cooldowns[characterName])
+
+	return math.max(0, tiempoRestante)
+end
+
+-- 🆕 FUNCIÓN: Forzar reset de cooldown (para habilidades)
+function BasicAttackCooldown.resetCooldown(character)
+	if not character then return end
+
+	local characterName = obtenerNombrePersonaje(character)
+	cooldowns[characterName] = nil
+	print("🔄 [Cooldown] Cooldown reseteado para: " .. characterName)
+end
+
+-- 🧹 Limpiar cooldowns cuando un personaje es eliminado
+game:GetService("Players").PlayerRemoving:Connect(function(player)
+	if player.Character then
+		local characterName = obtenerNombrePersonaje(player.Character)
+		cooldowns[characterName] = nil
+		print("🧹 [Cooldown] Cooldown limpiado para: " .. characterName)
+	end
+end)
+
+-- 🧹 Limpieza periódica de cooldowns huérfanos
+task.spawn(function()
+	while true do
+		task.wait(60) -- Cada minuto
+		local now = os.clock()
+		local limpiados = 0
+
+		for name, tiempo in pairs(cooldowns) do
+			-- Si no se ha usado en 5 minutos, limpiar
+			if now - tiempo > 300 then
+				cooldowns[name] = nil
+				limpiados += 1
+			end
+		end
+
+		if limpiados > 0 then
+			print("🧹 [Cooldown] Limpiados " .. limpiados .. " cooldowns huérfanos")
+		end
+	end
+end)
+
+print("✅ BasicAttackCooldown cargado - Sistema integrado con estados")
+return BasicAttackCooldown
