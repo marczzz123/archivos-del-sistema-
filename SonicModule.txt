@@ -1,0 +1,356 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
+-- Dependencias del servidor
+local VidaManager, EquipoManager, EstadoManager, CombatManager
+if RunService:IsServer() then
+	VidaManager = require(game.ServerScriptService:WaitForChild("VidaManager"))
+	EquipoManager = require(game.ReplicatedStorage:WaitForChild("EquipoManager"))
+	EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+	CombatManager = require(game.ReplicatedStorage:WaitForChild("CombatManager"))
+end
+
+local SonicSkills = {}
+
+SonicSkills["1"] = {
+	Nombre = "Spin Dash",
+	Descripcion = "Sonic se enrolla en una bola y avanza a gran velocidad en línea recta.",
+	Cooldown = 7,
+	Funcion = RunService:IsServer() and function(player)
+		print("[SonicSkills][Spin Dash] Activada por:", player and player.Name or "nil")
+
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		if not character or not humanoid or not hrp then return end
+		if player:GetAttribute("EnSpinDash") then return end -- evitar doble uso
+		player:SetAttribute("EnSpinDash", true)
+
+		-- Buscar el modelo SonicBall en ReplicatedStorage
+		local sonicBallPrefab = game.ReplicatedStorage:FindFirstChild("SonicBall")
+		if not sonicBallPrefab then
+			warn("❌ No se encontró el modelo SonicBall en ReplicatedStorage")
+			return
+		end
+
+		-- Variables de habilidad
+		local velocidad = 180
+		local danio = 30
+		local duracion = 1.5
+		local fuerzaEmpuje = 80
+
+		-- Crear bola
+		local bola = sonicBallPrefab:Clone()
+		bola.CFrame = hrp.CFrame
+		bola.Parent = workspace
+
+		-- Sentar humanoide para que no intente caminar
+		humanoid.Sit = true
+
+		-- Soldar TODO el personaje a la bola
+		local welds = {}
+		for _, part in character:GetDescendants() do
+			if part:IsA("BasePart") and part ~= bola then
+				local weld = Instance.new("WeldConstraint")
+				weld.Part0 = bola
+				weld.Part1 = part
+				weld.Parent = bola
+				table.insert(welds, weld)
+			end
+		end
+
+		-- Activar efectos mediante RemoteEvent
+		local sonicSpinEvent = game.ReplicatedStorage:FindFirstChild("SonicSpinEvent")
+		if sonicSpinEvent then
+			sonicSpinEvent:FireAllClients(bola, true)
+		end
+
+		-- Dirección del dash
+		local direccionDash = hrp.CFrame.LookVector
+
+		-- Mover con BodyVelocity
+		local cuerpoVelocidad = Instance.new("BodyVelocity")
+		cuerpoVelocidad.Velocity = direccionDash * velocidad
+		cuerpoVelocidad.MaxForce = Vector3.new(100000, 100000, 100000)
+		cuerpoVelocidad.Parent = bola
+
+		-- Detección de colisiones
+		local function onTouched(hit)
+			if hit:IsDescendantOf(character) then return end
+
+			local enemigo = CombatManager.IdentificarEnemigoDesdeParte(hit)
+			if enemigo then
+				-- Daño
+				CombatManager.AplicarDanioSegura(player, enemigo, danio)
+
+				-- Empuje
+				local rootPart = enemigo:FindFirstChild("HumanoidRootPart")
+				if rootPart then
+					local direccionEmpuje = (rootPart.Position - hrp.Position).Unit
+					local impulso = Instance.new("BodyVelocity")
+					impulso.Velocity = direccionEmpuje * fuerzaEmpuje + Vector3.new(0, 15, 0)
+					impulso.MaxForce = Vector3.new(50000, 50000, 50000)
+					impulso.Parent = rootPart
+					Debris:AddItem(impulso, 0.3)
+				end
+			end
+		end
+
+		local connection = bola.Touched:Connect(onTouched)
+
+		-- Limpieza después de la duración
+		task.delay(duracion, function()
+			if connection then
+				connection:Disconnect()
+			end
+
+			if cuerpoVelocidad and cuerpoVelocidad.Parent then
+				cuerpoVelocidad:Destroy()
+			end
+
+			-- Desactivar efectos
+			if sonicSpinEvent then
+				sonicSpinEvent:FireAllClients(bola, false)
+			end
+
+			-- Quitar welds temporales
+			for _, weld in ipairs(welds) do
+				if weld and weld.Parent then
+					weld:Destroy()
+				end
+			end
+
+			-- Destruir la bola
+			if bola and bola.Parent then
+				bola:Destroy()
+			end
+
+			-- Restaurar control del humanoide
+			humanoid.Sit = false
+
+			player:SetAttribute("EnSpinDash", false)
+		end)
+	end or nil
+}
+
+SonicSkills["2"] = {
+	Nombre = "Homing Attack",
+	Descripcion = "Salta hacia un enemigo cercano y lo golpea con un ataque dirigido.",
+	Cooldown = 10,
+	Funcion = RunService:IsServer() and function(player)
+		print("[SonicSkills][Homing Attack] Activada por:", player and player.Name or "nil")
+
+		-- Verificar si está en Spin Dash
+		if player:GetAttribute("EnSpinDash") then
+			warn("❌ Homing Attack bloqueada: jugador está en Spin Dash")
+			return false
+		end
+
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		if not character or not humanoid or not hrp then return false end
+
+		-- Buscar enemigo más cercano
+		local objetivo = nil
+		local distanciaMinima = 50
+		local objetivosValidos = {}
+
+		for _, target in ipairs(workspace:GetChildren()) do
+			if target:IsA("Model") and target ~= character then
+				local targetHumanoid = target:FindFirstChildOfClass("Humanoid")
+				local targetHrp = target:FindFirstChild("HumanoidRootPart")
+				if targetHumanoid and targetHrp and targetHumanoid.Health > 0 then
+					if EquipoManager.SonEnemigos(character, target) then
+						local distancia = (targetHrp.Position - hrp.Position).Magnitude
+						if distancia < distanciaMinima then
+							distanciaMinima = distancia
+							objetivo = target
+							table.insert(objetivosValidos, target)
+						end
+					end
+				end
+			end
+		end
+
+		if not objetivo then
+			warn("❌ No se encontró objetivo para Homing Attack")
+			return false
+		end
+
+		local objetivoHrp = objetivo:FindFirstChild("HumanoidRootPart")
+		if not objetivoHrp then
+			warn("❌ Objetivo no tiene HumanoidRootPart")
+			return false
+		end
+
+		-- Activar efectos visuales mediante RemoteEvent
+		local homingVisualEvent = game.ReplicatedStorage:FindFirstChild("SonicHomingVisual")
+		if homingVisualEvent then
+			homingVisualEvent:FireAllClients(character, objetivo)
+		end
+
+		-- Configurar movimiento hacia el objetivo
+		local direction = (objetivoHrp.Position - hrp.Position).Unit
+		local bodyVelocity = Instance.new("BodyVelocity")
+		bodyVelocity.Velocity = direction * 80
+		bodyVelocity.MaxForce = Vector3.new(100000, 100000, 100000)
+		bodyVelocity.Parent = hrp
+
+		-- Detectar colisión
+		local connection
+		local golpeRealizado = false
+
+		connection = hrp.Touched:Connect(function(hit)
+			if golpeRealizado then return end
+
+			local objetivoGolpeado = CombatManager.IdentificarEnemigoDesdeParte(hit)
+			if objetivoGolpeado and objetivoGolpeado == objetivo then
+				golpeRealizado = true
+
+				-- Aplicar daño y aturdimiento
+				CombatManager.AplicarDanioSegura(player, objetivo, 35)
+				EstadoManager.AplicarEstado(objetivo, "Aturdido", 0.5)
+
+				-- Posible cadena a otros enemigos
+				local cadenasRestantes = 2
+
+				local function buscarProximoObjetivo()
+					if cadenasRestantes <= 0 then return end
+
+					local nuevoObjetivo = nil
+					local nuevaDistanciaMinima = 20
+
+					for _, posibleObjetivo in ipairs(objetivosValidos) do
+						if posibleObjetivo ~= objetivo and posibleObjetivo ~= objetivoGolpeado then
+							local objetivoHrp = posibleObjetivo:FindFirstChild("HumanoidRootPart")
+							if objetivoHrp then
+								local distancia = (objetivoHrp.Position - hrp.Position).Magnitude
+								if distancia < nuevaDistanciaMinima then
+									nuevaDistanciaMinima = distancia
+									nuevoObjetivo = posibleObjetivo
+								end
+							end
+						end
+					end
+
+					if nuevoObjetivo then
+						objetivo = nuevoObjetivo
+						objetivoHrp = objetivo:FindFirstChild("HumanoidRootPart")
+
+						if objetivoHrp then
+							-- Actualizar dirección
+							direction = (objetivoHrp.Position - hrp.Position).Unit
+							bodyVelocity.Velocity = direction * 80
+
+							-- Activar efectos visuales para la cadena
+							if homingVisualEvent then
+								homingVisualEvent:FireAllClients(character, objetivo)
+							end
+
+							cadenasRestantes -= 1
+						end
+					end
+				end
+
+				-- Esperar un momento antes de buscar siguiente objetivo
+				task.delay(0.3, buscarProximoObjetivo)
+			end
+		end)
+
+		-- Limpieza después de 1.5 segundos
+		task.delay(1.5, function()
+			if connection then
+				connection:Disconnect()
+			end
+
+			if bodyVelocity and bodyVelocity.Parent then
+				bodyVelocity:Destroy()
+			end
+
+			-- Activar efectos de finalización
+			local homingEndEvent = game.ReplicatedStorage:FindFirstChild("SonicHomingEnd")
+			if homingEndEvent then
+				homingEndEvent:FireAllClients(character)
+			end
+		end)
+
+		return true
+	end or nil
+}
+SonicSkills["3"] = {
+	Nombre = "Speed Burst",
+	Descripcion = "Aumento de velocidad brutal durante unos segundos.",
+	Cooldown = 20,
+	Funcion = RunService:IsServer() and function(player)
+		print("[SonicSkills][Speed Burst] Activada por:", player and player.Name or "nil")
+
+		-- Verificar si está en Spin Dash
+		if player:GetAttribute("EnSpinDash") then
+			warn("❌ Speed Burst bloqueada: jugador está en Spin Dash")
+			return false
+		end
+
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		if not character or not humanoid or not hrp then return false end
+
+		-- Aumentar velocidad
+		local velocidadOriginal = humanoid.WalkSpeed
+		local velocidadAumentada = velocidadOriginal * 2.5
+		humanoid.WalkSpeed = velocidadAumentada
+
+		-- Activar atributo para mejorar ataques básicos
+		character:SetAttribute("SpeedBurstActive", true)
+		player:SetAttribute("EnSpeedBurst", true)
+
+		-- Efecto visual mediante RemoteEvent (solo para el jugador)
+		local speedBurstEvent = game.ReplicatedStorage:FindFirstChild("SonicSpeedBurstEvent")
+		if speedBurstEvent then
+			speedBurstEvent:FireClient(player, character, true)
+		end
+
+		-- Efecto de estela que daña a enemigos
+		local conexionEstela
+		conexionEstela = game:GetService("RunService").Heartbeat:Connect(function()
+			if not character or not character.Parent then
+				conexionEstela:Disconnect()
+				return
+			end
+
+			-- Aplicar daño a enemigos cercanos en la estela
+			local enemigosCercanos = CombatManager.BuscarEnemigosEnRadio(hrp.Position, 5, character)
+			for _, enemigo in ipairs(enemigosCercanos) do
+				CombatManager.AplicarDanioSegura(player, enemigo, 5) -- Daño pequeño por estela
+			end
+		end)
+
+		-- Restaurar después de 5 segundos
+		task.delay(5, function()
+			if humanoid and humanoid.Parent then
+				humanoid.WalkSpeed = velocidadOriginal
+			end
+
+			if character then
+				character:SetAttribute("SpeedBurstActive", false)
+			end
+
+			player:SetAttribute("EnSpeedBurst", false)
+
+			if conexionEstela then
+				conexionEstela:Disconnect()
+			end
+
+			-- Desactivar efecto visual
+			if speedBurstEvent then
+				speedBurstEvent:FireClient(player, character, false)
+			end
+		end)
+
+		return true
+	end or nil
+}
+
+return SonicSkills
