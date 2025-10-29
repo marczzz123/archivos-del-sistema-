@@ -1,0 +1,76 @@
+
+-- ServerScriptService/AttachMinionAI (Script)
+-- Automatically attaches MinionAI to every new minion spawned in Workspace
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MinionAI = require(ReplicatedStorage:WaitForChild("MinionAI"))
+
+-- 🔥 TABLA PARA RASTREAR MINIONS QUE YA TIENEN AI
+local minionsWithAI = {}
+
+local function tryAttachAI(minion)
+	-- ✅ VERIFICACIONES MÚLTIPLES PARA EVITAR DUPLICADOS
+	if not minion:IsA("Model") then
+		return
+	end
+
+	-- Esperar un frame para que los atributos se establezcan
+	task.wait(0.1)
+
+	-- Verificar si es un minion y si ya tiene AI
+	if minion:GetAttribute("IsMinion") and not minion:GetAttribute("AIStarted") then
+		-- 🔥 VERIFICACIÓN ADICIONAL: No procesar si ya está en la tabla
+		if minionsWithAI[minion] then
+			return
+		end
+
+		-- 🔥 MARCAR PRIMERO ANTES DE INICIAR LA AI
+		minion:SetAttribute("AIStarted", true)
+		minionsWithAI[minion] = true
+
+		print("🤖 AttachMinionAI: Iniciando AI para " .. minion.Name)
+		MinionAI.Start(minion)
+
+		-- 🔥 CONECTAR EVENTO DE DESTRUCCIÓN PARA LIMPIAR LA TABLA
+		minion.Destroying:Connect(function()
+			minionsWithAI[minion] = nil
+		end)
+	end
+end
+
+-- 🔥 LISTENER MEJORADO: Con delay y verificación
+local function onChildAdded(child)
+	-- Esperar un poco para que los atributos se establezcan
+	task.wait(0.2)
+	tryAttachAI(child)
+end
+
+-- 🔥 LISTENER PARA NUEVOS MINIONS
+game.Workspace.ChildAdded:Connect(onChildAdded)
+
+-- 🔥 INICIALIZACIÓN PARA MINIONS EXISTENTES
+task.spawn(function()
+	task.wait(2) -- Esperar a que todo se inicialice
+	print("🔍 AttachMinionAI: Buscando minions existentes...")
+
+	for _, child in ipairs(game.Workspace:GetChildren()) do
+		tryAttachAI(child)
+	end
+
+	print("✅ AttachMinionAI: Inicialización completada")
+end)
+
+-- 🔥 FUNCIÓN DE DEBUG
+game.Players.PlayerAdded:Connect(function(player)
+	player.Chatted:Connect(function(message)
+		if message:lower() == "/aiattachstatus" then
+			local count = 0
+			for _ in pairs(minionsWithAI) do
+				count += 1
+			end
+			print("📊 AttachMinionAI Status: " .. count .. " minions con AI activa")
+		end
+	end)
+end)
+
+print("✅ AttachMinionAI iniciado - Sistema anti-duplicación activado")
