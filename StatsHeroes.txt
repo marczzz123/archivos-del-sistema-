@@ -1,0 +1,83 @@
+local stats = {}
+
+stats["Spartan"] = {
+	[1] =  { Fuerza = 8,  Defensa = 7,  VidaMax = 120 },
+	[2] =  { Fuerza = 12, Defensa = 8,  VidaMax = 140 },
+	[3] =  { Fuerza = 16, Defensa = 10, VidaMax = 160 },
+	[4] =  { Fuerza = 18, Defensa = 10, VidaMax = 160 },
+	[5] =  { Fuerza = 21, Defensa = 12, VidaMax = 180 },
+	[6] =  { Fuerza = 25, Defensa = 13, VidaMax = 200 },
+	[7] =  { Fuerza = 28, Defensa = 14, VidaMax = 220 },
+	[8] =  { Fuerza = 32, Defensa = 15, VidaMax = 240 },
+	[9] =  { Fuerza = 36, Defensa = 16, VidaMax = 260 },
+	[10] = { Fuerza = 40, Defensa = 18, VidaMax = 280 },
+}
+
+stats["Nythera"] = {
+	[1] =  { Fuerza = 5,  Defensa = 7,  VidaMax = 120 },
+	[2] =  { Fuerza = 12, Defensa = 8,  VidaMax = 140 },
+	[3] =  { Fuerza = 16, Defensa = 10, VidaMax = 160 },
+	[4] =  { Fuerza = 18, Defensa = 10, VidaMax = 160 },
+	[5] =  { Fuerza = 21, Defensa = 12, VidaMax = 180 },
+	[6] =  { Fuerza = 25, Defensa = 13, VidaMax = 200 },
+	[7] =  { Fuerza = 28, Defensa = 14, VidaMax = 220 },
+	[8] =  { Fuerza = 32, Defensa = 15, VidaMax = 240 },
+	[9] =  { Fuerza = 36, Defensa = 16, VidaMax = 260 },
+	[10] = { Fuerza = 40, Defensa = 18, VidaMax = 280 },
+}
+
+stats["Sonic"] = {
+	[1] =  { Fuerza = 8,  Defensa = 5,  VidaMax = 100 },
+	[2] =  { Fuerza = 10, Defensa = 6,  VidaMax = 120 },
+	-- Completar hasta el nivel 10
+}
+
+stats["DragonYinYan"] = {
+	[1] =  { Fuerza = 8,  Defensa = 7,  VidaMax = 120 },
+	[2] =  { Fuerza = 12, Defensa = 8,  VidaMax = 140 },
+	[3] =  { Fuerza = 16, Defensa = 10, VidaMax = 160 },
+	[4] =  { Fuerza = 18, Defensa = 10, VidaMax = 160 },
+	[5] =  { Fuerza = 21, Defensa = 12, VidaMax = 180 },
+	[6] =  { Fuerza = 25, Defensa = 13, VidaMax = 200 },
+	[7] =  { Fuerza = 28, Defensa = 14, VidaMax = 220 },
+	[8] =  { Fuerza = 32, Defensa = 15, VidaMax = 240 },
+	[9] =  { Fuerza = 36, Defensa = 16, VidaMax = 260 },
+	[10] = { Fuerza = 40, Defensa = 18, VidaMax = 280 },
+}
+stats ["Blacktor"] = {
+	[1] =  { Fuerza = 6,  Defensa = 7,  VidaMax = 120 },
+	[2] =  { Fuerza = 12, Defensa = 8,  VidaMax = 140 },
+	[3] =  { Fuerza = 16, Defensa = 10, VidaMax = 160 },
+	[4] =  { Fuerza = 18, Defensa = 10, VidaMax = 160 },
+	[5] =  { Fuerza = 21, Defensa = 12, VidaMax = 180 },
+	[6] =  { Fuerza = 25, Defensa = 13, VidaMax = 200 },
+	[7] =  { Fuerza = 28, Defensa = 14, VidaMax = 220 },
+	[8] =  { Fuerza = 32, Defensa = 15, VidaMax = 240 },
+	[9] =  { Fuerza = 36, Defensa = 16, VidaMax = 260 },
+	[10] = { Fuerza = 40, Defensa = 18, VidaMax = 280 },
+}
+stats ["Zombie"] = {
+	[1] =  { Fuerza = 6,  Defensa = 7,  VidaMax = 120 },
+	[2] =  { Fuerza = 12, Defensa = 8,  VidaMax = 140 },
+	[3] =  { Fuerza = 16, Defensa = 10, VidaMax = 160 },
+	[4] =  { Fuerza = 18, Defensa = 10, VidaMax = 160 },
+	[5] =  { Fuerza = 21, Defensa = 12, VidaMax = 180 },
+	[6] =  { Fuerza = 25, Defensa = 13, VidaMax = 200 },
+	[7] =  { Fuerza = 28, Defensa = 14, VidaMax = 220 },
+	[8] =  { Fuerza = 32, Defensa = 15, VidaMax = 240 },
+	[9] =  { Fuerza = 36, Defensa = 16, VidaMax = 260 },
+	[10] = { Fuerza = 40, Defensa = 18, VidaMax = 280 },
+}	
+stats ["Mireya"] = {
+	[1] =  { Fuerza = 6,  Defensa = 8,  VidaMax = 140 },
+	[2] =  { Fuerza = 12, Defensa = 8,  VidaMax = 140 },
+	[3] =  { Fuerza = 16, Defensa = 10, VidaMax = 160 },
+	[4] =  { Fuerza = 18, Defensa = 10, VidaMax = 160 },
+	[5] =  { Fuerza = 21, Defensa = 12, VidaMax = 180 },
+	[6] =  { Fuerza = 25, Defensa = 13, VidaMax = 200 },
+	[7] =  { Fuerza = 28, Defensa = 14, VidaMax = 220 },
+	[8] =  { Fuerza = 32, Defensa = 15, VidaMax = 240 },
+	[9] =  { Fuerza = 36, Defensa = 16, VidaMax = 260 },
+	[10] = { Fuerza = 40, Defensa = 18, VidaMax = 280 },
+}	
+return stats
