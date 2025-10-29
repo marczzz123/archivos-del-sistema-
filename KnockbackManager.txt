@@ -1,0 +1,48 @@
+local KnockbackManager = {}
+
+local Debris = game:GetService("Debris")
+local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+local HighlightModule = require(game.ServerScriptService:WaitForChild("HighlightModule"))
+
+-- 🎯 Función para calcular dirección del knockback
+function KnockbackManager.CalcularDireccion(attacker, enemy, power)
+	local direccion = (enemy.HumanoidRootPart.Position - attacker.HumanoidRootPart.Position).Unit
+	return direccion * power
+end
+
+-- 💥 Aplicar knockback a enemigo
+function KnockbackManager.AplicarKnockback(enemy, knockbackVector, duracion)
+	local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+	if not enemyRoot then return end
+
+	local bd = Instance.new("BodyVelocity")
+	bd.MaxForce = Vector3.new(100000, 0, 100000)
+	bd.Velocity = knockbackVector
+	bd.Parent = enemyRoot
+
+	Debris:AddItem(bd, duracion or 0.2)
+end
+
+-- ⚡ Función unificada para aplicar efectos de impacto
+function KnockbackManager.ProcesarImpacto(attacker, enemy, config)
+	local config = config or {}
+	local knockbackPower = config.knockbackPower or 15
+	local impactoDuration = config.impactoDuration or 0.5
+	local ragdoll = config.ragdoll or false
+
+	-- 🎯 Calcular knockback
+	local knockbackVector = KnockbackManager.CalcularDireccion(attacker, enemy, knockbackPower)
+
+	-- 💥 Aplicar knockback
+	KnockbackManager.AplicarKnockback(enemy, knockbackVector, 0.2)
+
+	-- 🆕 APLICAR ESTADO "IMPACTADO"
+	EstadoManager.AplicarEstado(enemy, "Impactado", impactoDuration, {factor = 0.3})
+
+	-- ✨ Efecto visual
+	pcall(function()
+		HighlightModule.New(enemy)
+	end)
+end
+
+return KnockbackManager
