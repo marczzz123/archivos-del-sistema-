@@ -1,0 +1,2209 @@
+-- LocalScript en StarterPlayerScripts llamado "GenericAbilityVisualClient"
+--[[
+    This script listens for all ability visual RemoteEvents.
+    It only runs effects if the LocalPlayer's character matches the intended character.
+    To add a new character/ability, just add a new RemoteEvent and handler below.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+local ContextActionService = game:GetService("ContextActionService")
+
+-- 🔥 CARGAR DEBRISMODULE COMPLETO - SIN MODIFICACIONES
+local DebrisModule = require(ReplicatedStorage:WaitForChild("DebrisModule"))
+
+-- Table of ability visual RemoteEvents and their handlers
+local abilityVisuals = {
+	NytheraCrimsonBanquetVisual = function(impactPosition)
+		local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if not humanoid or not root then return end
+
+		-- Animación de aterrizaje (client-side)
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			local anim = Instance.new("Animation")
+			anim.AnimationId = "rbxassetid://507771019"
+			local track = animator:LoadAnimation(anim)
+			track:Play()
+		end
+
+		-- Imagen en el piso (círculo)
+		local circle = Instance.new("Part")
+		circle.Anchored = true
+		circle.CanCollide = false
+		circle.Size = Vector3.new(1, 0.1, 1)
+		circle.CFrame = CFrame.new(impactPosition) * CFrame.new(0, -2, 0)
+		circle.Material = Enum.Material.Neon
+		circle.Color = Color3.fromRGB(200, 0, 0)
+		circle.Transparency = 0.3
+		circle.Shape = Enum.PartType.Cylinder
+		circle.Parent = workspace
+
+		local tweenCircle = TweenService:Create(circle, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(80, 0.1, 80),
+			Transparency = 1
+		})
+		tweenCircle:Play()
+		Debris:AddItem(circle, 1)
+
+		-- Onda de choque 3D
+		local shockwave = Instance.new("Part")
+		shockwave.Anchored = true
+		shockwave.CanCollide = false
+		shockwave.Shape = Enum.PartType.Ball
+		shockwave.Size = Vector3.new(1, 1, 1)
+		shockwave.CFrame = CFrame.new(impactPosition)
+		shockwave.Material = Enum.Material.Neon
+		shockwave.Color = Color3.fromRGB(150, 0, 0)
+		shockwave.Transparency = 0.5
+		shockwave.Parent = workspace
+
+		local tweenShock = TweenService:Create(shockwave, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(50, 50, 50),
+			Transparency = 1
+		})
+		tweenShock:Play()
+		Debris:AddItem(shockwave, 1)
+	end,
+	LanzaSombriaEvent = function(posicion, direccion, tipoSonido)
+		-- Crear el cilindro (base invisible)
+		local cilindro = Instance.new("Part")
+		cilindro.Size = Vector3.new(1.5, 1.5, 3)
+		cilindro.Shape = Enum.PartType.Cylinder
+		cilindro.Transparency = 1 -- 🔥 invisible ahora
+		cilindro.Anchored = false
+		cilindro.CanCollide = false
+		cilindro.Position = posicion + direccion * 3
+		cilindro.Orientation = Vector3.new(0, 0, 90)
+		cilindro.Parent = workspace
+
+		-- Propulsión
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = direccion * 100
+		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+		bv.Parent = cilindro
+
+		-- Partículas de oscuridad (original)
+		local particulasBase = Instance.new("ParticleEmitter")
+		particulasBase.Texture = "rbxassetid://241594419"
+		particulasBase.Lifetime = NumberRange.new(0.5)
+		particulasBase.Rate = 30
+		particulasBase.Speed = NumberRange.new(2)
+		particulasBase.Size = NumberSequence.new(1)
+		particulasBase.Color = ColorSequence.new(Color3.fromRGB(20, 0, 40))
+		particulasBase.LightEmission = 0.5
+		particulasBase.Parent = cilindro
+
+		-- ✨ Nuevo efecto fantasma 1
+		local efecto1 = Instance.new("ParticleEmitter")
+		efecto1.Texture = "rbxassetid://101705230478256"
+		efecto1.Size = NumberSequence.new(4.8)
+		efecto1.Lifetime = NumberRange.new(0.1)
+		efecto1.Rate = 250
+		efecto1.Rotation = NumberRange.new(-5, 5)
+		efecto1.Speed = NumberRange.new(0.1)
+		efecto1.SpreadAngle = Vector2.new(180, 180)
+		efecto1.Parent = cilindro
+
+		-- ✨ Nuevo efecto fantasma 2
+		local efecto2 = Instance.new("ParticleEmitter")
+		efecto2.Texture = "rbxassetid://13453193534"
+		efecto2.Lifetime = NumberRange.new(0.7)
+		efecto2.Rate = 56
+		efecto2.Rotation = NumberRange.new(-180, 180)
+		efecto2.RotSpeed = NumberRange.new(100000)
+		efecto2.Speed = NumberRange.new(20)
+		efecto2.SpreadAngle = Vector2.new(180, 180)
+		efecto2.Parent = cilindro
+
+		-- 🔊 SONIDO DE LANZAMIENTO
+		if tipoSonido == "Lanzamiento" then
+			local sonidoLanzamiento = Instance.new("Sound")
+			sonidoLanzamiento.SoundId = "rbxassetid://116163774620085" -- Reemplaza con tu ID
+			sonidoLanzamiento.Volume = 0.9
+			sonidoLanzamiento.Parent = cilindro
+			sonidoLanzamiento:Play()
+			game.Debris:AddItem(sonidoLanzamiento, 3)
+		end
+
+		-- 🔊 SONIDO DE IMPACTO (se crea en la posición del impacto)
+		if tipoSonido == "Impacto" then
+			-- Crear una parte invisible para el sonido de impacto
+			local soundPart = Instance.new("Part")
+			soundPart.Anchored = true
+			soundPart.CanCollide = false
+			soundPart.Transparency = 1
+			soundPart.Size = Vector3.new(1, 1, 1)
+			soundPart.Position = posicion
+			soundPart.Parent = workspace
+
+			-- Crear y configurar el sonido
+			local sonidoImpacto = Instance.new("Sound")
+			sonidoImpacto.SoundId = "rbxassetid://100957857766161" -- Reemplaza con tu ID
+			sonidoImpacto.Volume = 0.8
+			sonidoImpacto.Parent = soundPart
+			sonidoImpacto:Play()
+
+			-- Limpiar después de reproducir
+			game.Debris:AddItem(soundPart, 3)
+		end
+
+		-- Auto-destrucción
+		game:GetService("Debris"):AddItem(cilindro, 3)
+	end,
+	-- Añadir esto a tu tabla abilityVisuals
+	SpartanLanzaEvent = function(tipo, posicion)
+		if tipo == "Lanzamiento" then
+			-- Sonido de lanzamiento de lanza (global, no necesita posición)
+			local sonidoLanzamiento = Instance.new("Sound")
+			sonidoLanzamiento.SoundId = "rbxassetid://101089310685851"
+			sonidoLanzamiento.Volume = 0.7
+			sonidoLanzamiento.Parent = workspace
+			sonidoLanzamiento:Play()
+			game.Debris:AddItem(sonidoLanzamiento, 3)
+
+		elseif tipo == "Impacto" then
+			-- Crear parte invisible para el sonido de impacto
+			local soundPart = Instance.new("Part")
+			soundPart.Anchored = true
+			soundPart.CanCollide = false
+			soundPart.Transparency = 1
+			soundPart.Size = Vector3.new(1, 1, 1)
+			soundPart.Position = posicion
+			soundPart.Parent = workspace
+
+			-- Sonido de impacto de lanza
+			local sonidoImpacto = Instance.new("Sound")
+			sonidoImpacto.SoundId = "rbxassetid://89396259479877"
+			sonidoImpacto.Volume = 0.9
+			sonidoImpacto.Parent = soundPart
+			sonidoImpacto:Play()
+			game.Debris:AddItem(soundPart, 3)
+
+			-- Efecto visual de impacto
+			local particulasImpacto = Instance.new("ParticleEmitter")
+			particulasImpacto.Texture = "rbxassetid://241594419"
+			particulasImpacto.Lifetime = NumberRange.new(0.3)
+			particulasImpacto.Rate = 35
+			particulasImpacto.Speed = NumberRange.new(5)
+			particulasImpacto.Size = NumberSequence.new(4.5)
+			particulasImpacto.Color = ColorSequence.new(Color3.fromRGB(255, 50, 50))
+
+			local partImpacto = Instance.new("Part")
+			partImpacto.Anchored = true
+			partImpacto.CanCollide = false
+			partImpacto.Transparency = 1
+			partImpacto.Size = Vector3.new(1, 1, 1)
+			partImpacto.Position = posicion
+			partImpacto.Parent = workspace
+			particulasImpacto.Parent = partImpacto
+
+			game.Debris:AddItem(partImpacto, 1)
+		end
+	end,
+	-- Añadir esto a tu tabla abilityVisuals
+	SpartanFuriaEvent = function(tipo, posicion)
+		if tipo == "Activacion" then
+			-- Crear parte para el efecto de furia (ya existe en tu código)
+			local partFuria = Instance.new("Part")
+			partFuria.Anchored = true
+			partFuria.CanCollide = false
+			partFuria.Transparency = 1
+			partFuria.Size = Vector3.new(1, 1, 1)
+			partFuria.Position = posicion
+			partFuria.Parent = workspace
+
+			-- Sonido de activación de furia - ahora lo parenteamos a partFuria
+			local sonidoActivacion = Instance.new("Sound")
+			sonidoActivacion.SoundId = "rbxassetid://86669767150450"
+			sonidoActivacion.Volume = 0.8
+			sonidoActivacion.Parent = partFuria  -- Parentear a la parte
+			sonidoActivacion:Play()
+			game.Debris:AddItem(sonidoActivacion, 3)
+
+			-- Efecto visual de furia (partículas rojas)
+			local particulasFuria = Instance.new("ParticleEmitter")
+			particulasFuria.Texture = "rbxassetid://241594419"
+			particulasFuria.Lifetime = NumberRange.new(1.5)
+			particulasFuria.Rate = 60
+			particulasFuria.Speed = NumberRange.new(4)
+			particulasFuria.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1.5),
+				NumberSequenceKeypoint.new(0.5, 2.5),
+				NumberSequenceKeypoint.new(1, 0)
+			})
+			particulasFuria.Color = ColorSequence.new(Color3.fromRGB(200, 0, 0))
+			particulasFuria.LightEmission = 0.6
+			particulasFuria.Parent = partFuria
+
+			-- Animación de expansión
+			partFuria.Size = Vector3.new(3, 3, 3)
+			local tweenInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			local tween = game:GetService("TweenService"):Create(partFuria, tweenInfo, {Size = Vector3.new(8, 8, 8)})
+			tween:Play()
+
+			game.Debris:AddItem(partFuria, 2)
+		end
+	end,
+	-- Añadir esto a tu tabla abilityVisuals
+	SpartanLlamasEvent = function(tipo)
+		local player = game.Players.LocalPlayer
+		local character = player.Character
+		if not character then return end
+
+		if tipo == "Activacion" then
+			-- Sonido de activación
+			local sonidoActivacion = Instance.new("Sound")
+			sonidoActivacion.SoundId = "rbxassetid://111669229965179" -- Reemplaza con tu ID
+			sonidoActivacion.Volume = 0.8
+			sonidoActivacion.Parent = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+			sonidoActivacion:Play()
+			game.Debris:AddItem(sonidoActivacion, 3)
+
+			-- Activar fuego visual en la lanza
+			local lanzaModel = character:FindFirstChild("Lanza")
+			if lanzaModel then
+				local headPart = lanzaModel:FindFirstChild("Head") or lanzaModel.PrimaryPart
+				if headPart then
+					local fire = lanzaModel:FindFirstChild("FireEmitter")
+					if not fire then
+						fire = Instance.new("ParticleEmitter")
+						fire.Name = "FireEmitter"
+						fire.Texture = "rbxassetid://241594419"
+						fire.LightEmission = 0.9
+						fire.Rate = 150
+						fire.Lifetime = NumberRange.new(0.6, 1.2)
+						fire.Speed = NumberRange.new(2, 4)
+						fire.Size = NumberSequence.new{
+							NumberSequenceKeypoint.new(0, 1.2),
+							NumberSequenceKeypoint.new(0.5, 1.8),
+							NumberSequenceKeypoint.new(1, 0.5)
+						}
+						fire.Color = ColorSequence.new{
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 120, 0)),
+							ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 200, 50)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 80, 0))
+						}
+						fire.Transparency = NumberSequence.new{
+							NumberSequenceKeypoint.new(0, 0),
+							NumberSequenceKeypoint.new(0.8, 0.3),
+							NumberSequenceKeypoint.new(1, 1)
+						}
+						fire.Parent = headPart
+					end
+					fire.Enabled = true
+				end
+			end
+
+			-- Efecto de aura de fuego alrededor del personaje
+			local auraFire = Instance.new("ParticleEmitter")
+			auraFire.Name = "AuraFire"
+			auraFire.Texture = "rbxassetid://241594419"
+			auraFire.LightEmission = 0.8
+			auraFire.Rate = 50
+			auraFire.Lifetime = NumberRange.new(0.8, 1.5)
+			auraFire.Speed = NumberRange.new(1, 2)
+			auraFire.Size = NumberSequence.new{
+				NumberSequenceKeypoint.new(0, 2),
+				NumberSequenceKeypoint.new(0.5, 3),
+				NumberSequenceKeypoint.new(1, 1)
+			}
+			auraFire.Color = ColorSequence.new{
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 100, 0)),
+				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 200, 30)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 50, 0))
+			}
+			auraFire.Transparency = NumberSequence.new{
+				NumberSequenceKeypoint.new(0, 0.2),
+				NumberSequenceKeypoint.new(0.5, 0.1),
+				NumberSequenceKeypoint.new(1, 0.8)
+			}
+
+			local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+			if hrp then
+				auraFire.Parent = hrp
+			end
+
+		elseif tipo == "Desactivacion" then
+			-- Apagar efectos visuales
+			local lanzaModel = character:FindFirstChild("Lanza")
+			if lanzaModel then
+				local fire = lanzaModel:FindFirstChild("FireEmitter")
+				if fire then
+					fire.Enabled = false
+				end
+			end
+
+			-- Remover aura de fuego
+			local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+			if hrp then
+				local auraFire = hrp:FindFirstChild("AuraFire")
+				if auraFire then
+					auraFire:Destroy()
+				end
+			end
+		end
+	end,
+
+	GolpeVacioEvent = function(tipo, posicion)
+		if tipo == "Inicio" then
+			-- Sonido de inicio de teletransporte (global, no necesita posición específica)
+			local sonidoInicio = Instance.new("Sound")
+			sonidoInicio.SoundId = "rbxassetid://127129414078900" -- Reemplaza con tu ID
+			sonidoInicio.Volume = 0.7
+			sonidoInicio.Parent = workspace
+			sonidoInicio:Play()
+			game.Debris:AddItem(sonidoInicio, 3)
+
+			-- Efecto visual de desaparición
+			local particulasDesaparicion = Instance.new("ParticleEmitter")
+			particulasDesaparicion.Texture = "rbxassetid://241594419"
+			particulasDesaparicion.Lifetime = NumberRange.new(0.5)
+			particulasDesaparicion.Rate = 100
+			particulasDesaparicion.Speed = NumberRange.new(5)
+			particulasDesaparicion.Size = NumberSequence.new(2)
+			particulasDesaparicion.Color = ColorSequence.new(Color3.fromRGB(40, 0, 80))
+			particulasDesaparicion.Parent = workspace
+
+			local partDesaparicion = Instance.new("Part")
+			partDesaparicion.Anchored = true
+			partDesaparicion.CanCollide = false
+			partDesaparicion.Transparency = 1
+			partDesaparicion.Size = Vector3.new(1, 1, 1)
+			partDesaparicion.Position = posicion
+			partDesaparicion.Parent = workspace
+			particulasDesaparicion.Parent = partDesaparicion
+
+			game.Debris:AddItem(partDesaparicion, 1)
+
+		elseif tipo == "Llegada" then
+			-- Crear una parte invisible para el sonido de llegada
+			local soundPart = Instance.new("Part")
+			soundPart.Anchored = true
+			soundPart.CanCollide = false
+			soundPart.Transparency = 1
+			soundPart.Size = Vector3.new(1, 1, 1)
+			soundPart.Position = posicion
+			soundPart.Parent = workspace
+
+			-- Sonido de llegada
+			local sonidoLlegada = Instance.new("Sound")
+			sonidoLlegada.SoundId = "rbxassetid://73126883336461" -- Reemplaza con tu ID
+			sonidoLlegada.Volume = 0.8
+			sonidoLlegada.Parent = soundPart
+			sonidoLlegada:Play()
+			game.Debris:AddItem(soundPart, 3)
+
+			-- 🔥 AURA ROTA - Partículas que giran como energía rajada
+			local auraRota = Instance.new("Part")
+			auraRota.Size = Vector3.new(1, 1, 1)
+			auraRota.Transparency = 1
+			auraRota.Anchored = true
+			auraRota.CanCollide = false
+			auraRota.Position = posicion
+			auraRota.Parent = workspace
+
+			-- Efecto de partículas que giran (aura rota)
+			local particulasAura = Instance.new("ParticleEmitter")
+			particulasAura.Texture = "rbxassetid://101705230478256" -- Textura de energía
+			particulasAura.Lifetime = NumberRange.new(1.5)
+			particulasAura.Rate = 50
+			particulasAura.RotSpeed = NumberRange.new(50, 100) -- Giran rápidamente
+			particulasAura.Speed = NumberRange.new(5)
+			particulasAura.VelocitySpread = 180 -- Expansión completa
+			particulasAura.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1),
+				NumberSequenceKeypoint.new(0.5, 3),
+				NumberSequenceKeypoint.new(1, 0)
+			})
+			particulasAura.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 0, 160)),
+				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(120, 0, 220)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(40, 0, 80))
+			})
+			particulasAura.Parent = auraRota
+
+			-- Efecto secundario de destellos
+			local destellos = Instance.new("ParticleEmitter")
+			destellos.Texture = "rbxassetid://241594419"
+			destellos.Lifetime = NumberRange.new(0.5)
+			destellos.Rate = 30
+			destellos.Speed = NumberRange.new(10)
+			destellos.Size = NumberSequence.new(2)
+			destellos.Color = ColorSequence.new(Color3.fromRGB(160, 0, 255))
+			destellos.LightEmission = 1
+			destellos.Parent = auraRota
+
+			-- Animación de expansión y desvanecimiento
+			auraRota.Size = Vector3.new(5, 5, 5)
+			local tweenInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			local tween = game:GetService("TweenService"):Create(auraRota, tweenInfo, {Size = Vector3.new(10, 10, 10)})
+			tween:Play()
+
+			-- Auto-destrucción
+			game.Debris:AddItem(auraRota, 2)
+		end
+	end,
+-- 🌌 Efecto visual para la Prisión de Éter Negro de Blacktor
+BlacktorPrisonVisual = function(posicion, radio)
+	-- Crear efecto visual de la prisión
+	local prision = Instance.new("Part")
+	prision.Shape = Enum.PartType.Ball
+	prision.Size = Vector3.new(1, 1, 1)
+	prision.Position = posicion
+	prision.Transparency = 0.7
+	prision.Material = Enum.Material.Neon
+	prision.Color = Color3.fromRGB(20, 0, 40)
+	prision.Anchored = true
+	prision.CanCollide = false
+	prision.Parent = workspace
+
+	-- Tween para expandir la esfera
+	local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(prision, tweenInfo, {
+		Size = Vector3.new(radio * 2, radio * 2, radio * 2)
+	})
+	tween:Play()
+
+	-- Efecto de partículas
+	local particulas = Instance.new("ParticleEmitter")
+	particulas.Texture = "rbxassetid://241594419"
+	particulas.Lifetime = NumberRange.new(1)
+	particulas.Rate = 100
+	particulas.Speed = NumberRange.new(2)
+	particulas.Size = NumberSequence.new(3)
+	particulas.Color = ColorSequence.new(Color3.fromRGB(30, 0, 60))
+	particulas.Parent = prision
+
+	-- Luz ambiental
+	local luz = Instance.new("PointLight")
+	luz.Color = Color3.fromRGB(40, 0, 80)
+	luz.Range = radio * 2
+	luz.Brightness = 2
+	luz.Parent = prision
+
+	-- Remover después de 5 segundos
+	Debris:AddItem(prision, 5)
+
+	print("🌌 Efecto visual de Prisión de Éter Negro activado")
+end,
+
+	SpartanColiseoEvent = function(tipo, posicion)
+		if tipo == "Invocacion" then
+			-- Crear parte para el sonido
+			local soundPart = Instance.new("Part")
+			soundPart.Anchored = true
+			soundPart.CanCollide = false
+			soundPart.Transparency = 1
+			soundPart.Size = Vector3.new(1, 1, 1)
+			soundPart.Position = posicion
+			soundPart.Parent = workspace
+
+			-- Sonido de invocación del coliseo
+			local sonidoInvocacion = Instance.new("Sound")
+			sonidoInvocacion.SoundId = "rbxassetid://88812513482894"
+			sonidoInvocacion.Volume = 1.0
+			sonidoInvocacion.Parent = soundPart
+			sonidoInvocacion:Play()
+			Debris:AddItem(soundPart, 5)
+
+			-- Efecto visual de invocación (partículas de tierra/roca)
+			local particulasInvocacion = Instance.new("ParticleEmitter")
+			particulasInvocacion.Texture = "rbxassetid://241594419"
+			particulasInvocacion.Lifetime = NumberRange.new(1.5)
+			particulasInvocacion.Rate = 100
+			particulasInvocacion.Speed = NumberRange.new(5)
+			particulasInvocacion.Size = NumberSequence.new(2)
+			particulasInvocacion.Color = ColorSequence.new(Color3.fromRGB(100, 60, 30))
+			particulasInvocacion.LightEmission = 0.5
+
+			local partInvocacion = Instance.new("Part")
+			partInvocacion.Anchored = true
+			partInvocacion.CanCollide = false
+			partInvocacion.Transparency = 1
+			partInvocacion.Size = Vector3.new(1, 1, 1)
+			partInvocacion.Position = posicion
+			partInvocacion.Parent = workspace
+			particulasInvocacion.Parent = partInvocacion
+
+			Debris:AddItem(partInvocacion, 2)
+
+		elseif tipo == "Activo" then
+			-- Crear parte para el sonido activo
+			local soundPart = Instance.new("Part")
+			soundPart.Anchored = true
+			soundPart.CanCollide = false
+			soundPart.Transparency = 1
+			soundPart.Size = Vector3.new(1, 1, 1)
+			soundPart.Position = posicion
+			soundPart.Parent = workspace
+
+			-- Sonido de coliseo activo (loop)
+			local sonidoActivo = Instance.new("Sound")
+			sonidoActivo.SoundId = "rbxassetid://106250523641981"
+			sonidoActivo.Volume = 0.7
+			sonidoActivo.Looped = true
+			sonidoActivo.Parent = soundPart
+			sonidoActivo:Play()
+
+			-- Guardar referencia para poder detenerlo luego
+			local sonidoRef = Instance.new("ObjectValue")
+			sonidoRef.Name = "ColiseoSonidoActivo"
+			sonidoRef.Value = sonidoActivo
+			sonidoRef.Parent = workspace
+
+			-- Efecto visual de aura alrededor del coliseo
+			local auraColiseo = Instance.new("ParticleEmitter")
+			auraColiseo.Texture = "rbxassetid://241594419"
+			auraColiseo.Lifetime = NumberRange.new(1)
+			auraColiseo.Rate = 30
+			auraColiseo.Speed = NumberRange.new(2)
+			auraColiseo.Size = NumberSequence.new(3)
+			auraColiseo.Color = ColorSequence.new(Color3.fromRGB(200, 150, 50))
+			auraColiseo.LightEmission = 0.6
+			auraColiseo.Transparency = NumberSequence.new(0.5)
+
+			local partAura = Instance.new("Part")
+			partAura.Anchored = true
+			partAura.CanCollide = false
+			partAura.Transparency = 1
+			partAura.Size = Vector3.new(1, 1, 1)
+			partAura.Position = posicion
+			partAura.Parent = workspace
+			auraColiseo.Parent = partAura
+
+			Debris:AddItem(partAura, 20)
+
+		elseif tipo == "Finalizacion" then
+			-- Detener sonido activo
+			local sonidoRef = workspace:FindFirstChild("ColiseoSonidoActivo")
+			if sonidoRef and sonidoRef.Value then
+				sonidoRef.Value:Stop()
+				sonidoRef:Destroy()
+			end
+
+			-- Crear parte para el sonido de finalización
+			local soundPart = Instance.new("Part")
+			soundPart.Anchored = true
+			soundPart.CanCollide = false
+			soundPart.Transparency = 1
+			soundPart.Size = Vector3.new(1, 1, 1)
+			soundPart.Position = posicion
+			soundPart.Parent = workspace
+
+			-- Sonido de finalización
+			local sonidoFinal = Instance.new("Sound")
+			sonidoFinal.SoundId = "rbxassetid://99208474690775"
+			sonidoFinal.Volume = 0.8
+			sonidoFinal.Parent = soundPart
+			sonidoFinal:Play()
+			Debris:AddItem(soundPart, 4)
+
+			-- Efecto visual de desvanecimiento
+			local particulasFinal = Instance.new("ParticleEmitter")
+			particulasFinal.Texture = "rbxassetid://241594419"
+			particulasFinal.Lifetime = NumberRange.new(1)
+			particulasFinal.Rate = 50
+			particulasFinal.Speed = NumberRange.new(3)
+			particulasFinal.Size = NumberSequence.new(2)
+			particulasFinal.Color = ColorSequence.new(Color3.fromRGB(150, 100, 30))
+
+			local partFinal = Instance.new("Part")
+			partFinal.Anchored = true
+			partFinal.CanCollide = false
+			partFinal.Transparency = 1
+			partFinal.Size = Vector3.new(1, 1, 1)
+			partFinal.Position = posicion
+			partFinal.Parent = workspace
+			particulasFinal.Parent = partFinal
+
+			Debris:AddItem(partFinal, 2)
+		end
+	end,
+-- En GenericAbilityVisualClient, actualiza el handler de OrbeDualVisual:
+OrbeDualVisual = function(origen, direccion)
+	local orbe = Instance.new("Part")
+	orbe.Shape = Enum.PartType.Ball
+	orbe.Size = Vector3.new(1.5, 1.5, 1.5)
+	orbe.CFrame = CFrame.new(origen) + (direccion * 2)
+	orbe.Anchored = true
+	orbe.CanCollide = false
+	orbe.Transparency = 0.3
+	orbe.Color = Color3.new(0, 0, 0)
+	orbe.Parent = workspace
+
+	-- Material mitad blanco, mitad negro (efecto de rotación)
+	local mesh = Instance.new("SpecialMesh", orbe)
+	mesh.MeshType = Enum.MeshType.Sphere
+
+	-- Efecto de partículas blanco
+	local particulasLuz = Instance.new("ParticleEmitter", orbe)
+	particulasLuz.Color = ColorSequence.new(Color3.new(1, 1, 1))
+	particulasLuz.LightEmission = 0.8
+	particulasLuz.Size = NumberSequence.new(0.5)
+	particulasLuz.Transparency = NumberSequence.new(0.5)
+	particulasLuz.Rate = 20
+
+	-- Efecto de partículas negro
+	local particulasOscuridad = Instance.new("ParticleEmitter", orbe)
+	particulasOscuridad.Color = ColorSequence.new(Color3.new(0, 0, 0))
+	particulasOscuridad.LightEmission = 0.1
+	particulasOscuridad.Size = NumberSequence.new(0.5)
+	particulasOscuridad.Transparency = NumberSequence.new(0.5)
+	particulasOscuridad.Rate = 20
+
+	-- Mover el orbe
+	local velocidad = 70
+	local duracion = 3
+	local tweenInfo = TweenInfo.new(duracion, Enum.EasingStyle.Linear)
+	local tween = TweenService:Create(orbe, tweenInfo, {
+		CFrame = orbe.CFrame + (direccion * velocidad * duracion)
+	})
+	tween:Play()
+
+	Debris:AddItem(orbe, duracion)
+end,
+
+
+
+
+
+	PasoEquilibrioVisual = function(posInicio, posFin, nivel)
+		print("🎨 Creando efecto visual Paso de Equilibrio...")
+
+		local attachmentInicio = Instance.new("Attachment")
+		local attachmentFin = Instance.new("Attachment")
+
+		-- Crear partes invisibles de anclaje
+		local parteInicio = Instance.new("Part")
+		parteInicio.Size = Vector3.new(1, 1, 1)
+		parteInicio.Transparency = 1
+		parteInicio.Anchored = true
+		parteInicio.CanCollide = false
+		parteInicio.CFrame = CFrame.new(posInicio)
+		attachmentInicio.Parent = parteInicio
+		parteInicio.Parent = workspace
+
+		local parteFin = Instance.new("Part")
+		parteFin.Size = Vector3.new(1, 1, 1)
+		parteFin.Transparency = 1
+		parteFin.Anchored = true
+		parteFin.CanCollide = false
+		parteFin.CFrame = CFrame.new(posFin)
+		attachmentFin.Parent = parteFin
+		parteFin.Parent = workspace
+
+		-- Beam Yin (oscuro)
+		local beamYin = Instance.new("Beam")
+		beamYin.Attachment0 = attachmentInicio
+		beamYin.Attachment1 = attachmentFin
+		beamYin.Color = ColorSequence.new{
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 0, 80)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0))
+		}
+		beamYin.LightEmission = 0.7
+		beamYin.Transparency = NumberSequence.new(0.1)
+		beamYin.Width0 = 1.0 + (nivel * 0.1)
+		beamYin.Width1 = 1.0 + (nivel * 0.1)
+		beamYin.FaceCamera = true
+		beamYin.Texture = "rbxassetid://110128872135949"
+		beamYin.TextureMode = Enum.TextureMode.Stretch
+		beamYin.TextureLength = 2
+		beamYin.TextureSpeed = 2
+		beamYin.CurveSize0 = 0.5
+		beamYin.CurveSize1 = -0.5
+		beamYin.Parent = workspace
+
+		-- Beam Yang (claro)
+		local beamYang = Instance.new("Beam")
+		beamYang.Attachment0 = attachmentInicio
+		beamYang.Attachment1 = attachmentFin
+		beamYang.Color = ColorSequence.new{
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 200, 50)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255))
+		}
+		beamYang.LightEmission = 0.8
+		beamYang.Transparency = NumberSequence.new(0.15)
+		beamYang.Width0 = 0.8 + (nivel * 0.08)
+		beamYang.Width1 = 0.8 + (nivel * 0.08)
+		beamYang.FaceCamera = true
+		beamYang.Texture = "rbxassetid://110128872135949"
+		beamYang.TextureMode = Enum.TextureMode.Stretch
+		beamYang.TextureLength = 2
+		beamYang.TextureSpeed = -2
+		beamYang.CurveSize0 = -0.5
+		beamYang.CurveSize1 = 0.5
+		beamYang.Parent = workspace
+
+		-- Efecto de partículas duales (Yin y Yang)
+		local puntoMedio = Instance.new("Part")
+		puntoMedio.Size = Vector3.new(1, 1, 1)
+		puntoMedio.CFrame = CFrame.new((posInicio + posFin) / 2)
+		puntoMedio.Anchored = true
+		puntoMedio.CanCollide = false
+		puntoMedio.Transparency = 1
+		puntoMedio.Parent = workspace
+
+		-- Partículas Yin (oscuras)
+		local particulasYin = Instance.new("ParticleEmitter")
+		particulasYin.Texture = "rbxassetid://483448292"
+		particulasYin.Color = ColorSequence.new{
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(50, 0, 100)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0))
+		}
+		particulasYin.Size = NumberSequence.new(0.3 + (nivel * 0.05))
+		particulasYin.LightEmission = 0.4
+		particulasYin.Lifetime = NumberRange.new(0.4, 0.8)
+		particulasYin.Rate = 40 + (nivel * 5)
+		particulasYin.Speed = NumberRange.new(2, 5)
+		particulasYin.SpreadAngle = Vector2.new(180, 180)
+		particulasYin.Rotation = NumberRange.new(0, 360)
+		particulasYin.Parent = puntoMedio
+
+		-- Partículas Yang (claras)
+		local particulasYang = Instance.new("ParticleEmitter")
+		particulasYang.Texture = "rbxassetid://483448292"
+		particulasYang.Color = ColorSequence.new{
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 200)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255))
+		}
+		particulasYang.Size = NumberSequence.new(0.2 + (nivel * 0.04))
+		particulasYang.LightEmission = 0.6
+		particulasYang.Lifetime = NumberRange.new(0.3, 0.7)
+		particulasYang.Rate = 35 + (nivel * 4)
+		particulasYang.Speed = NumberRange.new(3, 6)
+		particulasYang.SpreadAngle = Vector2.new(180, 180)
+		particulasYang.Rotation = NumberRange.new(180, 540)
+		particulasYang.Parent = puntoMedio
+
+		-- 💫 Efecto de destello en inicio y fin (RESTAURADO)
+		local function crearDestello(posicion, color)
+			local destello = Instance.new("Part")
+			destello.Size = Vector3.new(2, 2, 2)
+			destello.Shape = Enum.PartType.Ball
+			destello.CFrame = CFrame.new(posicion)
+			destello.Anchored = true
+			destello.CanCollide = false
+			destello.Material = Enum.Material.Neon
+			destello.BrickColor = BrickColor.new(color)
+			destello.Transparency = 0.3
+			destello.Parent = workspace
+
+			-- Animación de expansión y desvanecimiento
+			local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			local tween = game:GetService("TweenService"):Create(destello, tweenInfo, {
+				Size = Vector3.new(6, 6, 6),
+				Transparency = 1
+			})
+			tween:Play()
+
+			return destello
+		end
+
+		-- Crear destellos en inicio y fin
+		local destelloInicio = crearDestello(posInicio, "Really black")  -- Yin
+		local destelloFin = crearDestello(posFin, "White")              -- Yang
+
+		-- Limpieza automática
+		game:GetService("Debris"):AddItem(parteInicio, 2)
+		game:GetService("Debris"):AddItem(parteFin, 2)
+		game:GetService("Debris"):AddItem(beamYin, 2)
+		game:GetService("Debris"):AddItem(beamYang, 2)
+		game:GetService("Debris"):AddItem(puntoMedio, 2)
+		game:GetService("Debris"):AddItem(destelloInicio, 2)
+		game:GetService("Debris"):AddItem(destelloFin, 2)
+
+		print("✨ Efecto visual Paso de Equilibrio creado (Nivel: " .. nivel .. ")")
+	end,
+
+
+
+
+
+MarcaYinYangVisual = function(objetivo, tipoMarca)
+	-- tipoMarca: 1 = Yin, 2 = Yang, 3 = YinYang
+	if not objetivo or not objetivo.Parent then return end
+
+	local cabeza = objetivo:FindFirstChild("Head")
+	if not cabeza then return end
+
+	-- Eliminar marca anterior si existe
+	local marcaAnterior = cabeza:FindFirstChild("MarcaYinYang")
+	if marcaAnterior then
+		marcaAnterior:Destroy()
+	end
+
+	-- Crear nueva marca
+	local marca = Instance.new("BillboardGui")
+	marca.Name = "MarcaYinYang"
+	marca.Size = UDim2.new(4, 0, 4, 0)
+	marca.AlwaysOnTop = true
+	marca.StudsOffset = Vector3.new(0, 3, 0)
+	marca.Parent = cabeza
+
+	local imagen = Instance.new("ImageLabel")
+	imagen.Size = UDim2.new(1, 0, 1, 0)
+	imagen.BackgroundTransparency = 1
+	imagen.Parent = marca
+
+	-- Asignar la textura según el tipo de marca
+	if tipoMarca == 1 then
+		imagen.Image = "rbxassetid://85252569369334" -- Reemplazar con ID real
+	elseif tipoMarca == 2 then
+		imagen.Image = "rbxassetid://109002385220835" -- Reemplazar con ID real
+	else
+		imagen.Image = "rbxassetid://139801701867215" -- Reemplazar con ID real
+	end
+
+	-- Programar la eliminación después de la duración (opcional, ya que el servidor controla el estado)
+	Debris:AddItem(marca, 4) -- 4 segundos para coincidir con la duración de la marca
+end,
+
+
+	JuicioEquilibrioVisual = function(posicion, radio, duracion, nivel)
+		local RunService = game:GetService("RunService")
+		local Debris = game:GetService("Debris")
+		local ContentProvider = game:GetService("ContentProvider")
+
+		-- 🔥 OBTENER EL TEMPLATE PREDEFINIDO (igual que en servidor)
+		local JuicioTemplate = game.ReplicatedStorage:FindFirstChild("Juicio")
+		if not JuicioTemplate then return end
+
+		local disco = JuicioTemplate:Clone()
+
+		-- 🔥 CONFIGURACIÓN IGUAL QUE EN SERVIDOR
+		disco.Position = posicion + Vector3.new(0, 0.1, 0)
+		disco.Anchored = true
+		disco.CanCollide = false
+		disco.Parent = workspace
+
+		-- 🔥 ESCALAR SEGÚN RADIO
+		local escala = radio / 8
+		disco.Size = disco.Size * escala
+
+		-- 🔥 GUARDAR ORIENTACIÓN INICIAL
+		local orientacionInicial = disco.CFrame - disco.Position
+
+		-- 🔥 ACTIVAR PARTÍCULAS EN ORDEN CORRECTO
+		-- 1. Efecto principal inmediato
+		local efectoPrincipal = disco:FindFirstChild("efect")
+		if efectoPrincipal and efectoPrincipal:IsA("ParticleEmitter") then
+			efectoPrincipal.Enabled = true
+		end
+
+		-- 2. Humito inmediato
+		for _, att in ipairs(disco:GetDescendants()) do
+			if att:IsA("Attachment") and att.Name == "humito" then
+				local emisor = att:FindFirstChildOfClass("ParticleEmitter")
+				if emisor then
+					emisor.Enabled = true
+				end
+			end
+		end
+
+		-- 3. Viento después de 0.2 segundos
+		task.delay(0.2, function()
+			if disco and disco.Parent then
+				for _, att in ipairs(disco:GetDescendants()) do
+					if att:IsA("Attachment") and att.Name == "viento" then
+						local emisor = att:FindFirstChildOfClass("ParticleEmitter")
+						if emisor then
+							emisor.Enabled = true
+						end
+					end
+				end
+			end
+		end)
+
+		-- 🔥 ANIMACIÓN DE ROTACIÓN
+		local tiempoInicio = tick()
+		local conexion
+		conexion = RunService.RenderStepped:Connect(function()
+			if not disco or not disco.Parent then
+				if conexion then conexion:Disconnect() end
+				return
+			end
+
+			local tiempoTranscurrido = tick() - tiempoInicio
+			if tiempoTranscurrido >= duracion then
+				if conexion then conexion:Disconnect() end
+				return
+			end
+
+			-- Rotación corregida
+			disco.CFrame = CFrame.new(disco.Position) * orientacionInicial * CFrame.Angles(0, math.rad(tiempoTranscurrido * 90), 0)
+		end)
+
+		-- Efecto de explosión al final
+		task.delay(duracion, function()
+			if disco and disco.Parent then
+				-- Desactivar partículas
+				for _, emitter in ipairs(disco:GetDescendants()) do
+					if emitter:IsA("ParticleEmitter") then
+						emitter.Enabled = false
+					end
+				end
+
+				-- Sonido de explosión
+				local sonidoExplosion = Instance.new("Sound")
+				sonidoExplosion.SoundId = "rbxassetid://91755006623501"
+				sonidoExplosion.Volume = 0.8
+				sonidoExplosion.Parent = disco
+
+				ContentProvider:PreloadAsync({sonidoExplosion})
+				sonidoExplosion:Play()
+
+				-- Destruir después del sonido
+				sonidoExplosion.Ended:Connect(function()
+					if disco and disco.Parent then
+						disco:Destroy()
+					end
+				end)
+
+				Debris:AddItem(disco, 3)
+			end
+		end)
+	end,
+
+SonicSpinEvent = function(bola, activar)
+	if not bola or not bola.Parent then return end
+
+	if activar then
+		-- Activar efectos de sonido y partículas
+		if bola:FindFirstChild("SpinSound") then 
+			local sound = bola.SpinSound:Clone()
+			sound.Parent = workspace
+			sound:Play()
+			Debris:AddItem(sound, sound.TimeLength)
+		end
+
+		if bola:FindFirstChild("SpinFX") then 
+			bola.SpinFX.Enabled = true
+		end
+
+		if bola:FindFirstChild("BodyAngularVelocity") then
+			bola.BodyAngularVelocity.AngularVelocity = Vector3.new(0, 20, 0)
+		end
+	else
+		-- Desactivar efectos
+		if bola:FindFirstChild("SpinFX") then 
+			bola.SpinFX.Enabled = false
+		end
+	end
+end,
+SonicHomingVisual = function(character, objetivo)
+	-- Efecto de inicio de Homing Attack
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local objetivoHrp = objetivo:FindFirstChild("HumanoidRootPart")
+
+	if not hrp or not objetivoHrp then return end
+
+	-- Crear efecto de estela azul
+	local estela = Instance.new("Part")
+	estela.Size = Vector3.new(1, 1, 1)
+	estela.Shape = Enum.PartType.Ball
+	estela.Color = Color3.fromRGB(0, 100, 255)
+	estela.Material = Enum.Material.Neon
+	estela.Transparency = 0.5
+	estela.Anchored = true
+	estela.CanCollide = false
+	estela.CFrame = hrp.CFrame
+	estela.Parent = workspace
+
+	-- Partículas de estela
+	local particulas = Instance.new("ParticleEmitter")
+	particulas.Texture = "rbxassetid://241594419"
+	particulas.Color = ColorSequence.new(Color3.fromRGB(0, 100, 255))
+	particulas.Size = NumberSequence.new(1)
+	particulas.Transparency = NumberSequence.new(0.5)
+	particulas.Rate = 30
+	particulas.LightEmission = 0.8
+	particulas.Parent = estela
+
+	-- Animación de movimiento de la estela
+	local duracion = 0.5
+	local tweenInfo = TweenInfo.new(duracion, Enum.EasingStyle.Linear)
+	local tween = TweenService:Create(estela, tweenInfo, {
+		CFrame = objetivoHrp.CFrame
+	})
+	tween:Play()
+
+	-- Destruir después de la animación
+	Debris:AddItem(estela, duracion + 0.1)
+
+	-- Sonido de Homing Attack
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://911966963" -- ID de ejemplo, reemplazar con sonido real
+	sound.Volume = 0.7
+	sound.Parent = hrp
+	sound:Play()
+	Debris:AddItem(sound, sound.TimeLength)
+end,
+
+SonicHomingEnd = function(character)
+	-- Efecto de finalización de Homing Attack
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Explosión de partículas azules al finalizar
+	local explosion = Instance.new("Part")
+	explosion.Size = Vector3.new(1, 1, 1)
+	explosion.Shape = Enum.PartType.Ball
+	explosion.Color = Color3.fromRGB(0, 100, 255)
+	explosion.Material = Enum.Material.Neon
+	explosion.Transparency = 1
+	explosion.Anchored = true
+	explosion.CanCollide = false
+	explosion.CFrame = hrp.CFrame
+	explosion.Parent = workspace
+
+	local particulas = Instance.new("ParticleEmitter")
+	particulas.Texture = "rbxassetid://241594419"
+	particulas.Color = ColorSequence.new(Color3.fromRGB(0, 100, 255))
+	particulas.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 3)
+	})
+	particulas.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(1, 1)
+	})
+	particulas.Rate = 100
+	particulas.Speed = NumberRange.new(10)
+	particulas.Lifetime = NumberRange.new(0.5)
+	particulas.LightEmission = 0.8
+	particulas.Parent = explosion
+
+	-- Sonido de impacto
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://911966963" -- ID de ejemplo, reemplazar con sonido real
+	sound.Volume = 0.5
+	sound.Parent = hrp
+	sound:Play()
+	Debris:AddItem(sound, sound.TimeLength)
+
+	Debris:AddItem(explosion, 1)
+end,
+-- Add more ability visual handlers here for other characters/skills
+-- Agregar en la tabla abilityVisuals:
+SonicSpeedBurstEvent = function(character, activar)
+	if not character then return end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	if activar then
+		-- Crear estela de partículas azules
+		local estela = Instance.new("ParticleEmitter")
+		estela.Texture = "rbxassetid://241594419"
+		estela.Color = ColorSequence.new(Color3.fromRGB(0, 100, 255))
+		estela.Size = NumberSequence.new(1.5)
+		estela.Transparency = NumberSequence.new(0.5)
+		estela.Rate = 50
+		estela.LightEmission = 0.8
+		estela.VelocitySpread = 20
+		estela.Parent = hrp
+
+		-- Guardar referencia para poder eliminarlo luego
+		if not character:FindFirstChild("SpeedBurstEffects") then
+			local folder = Instance.new("Folder")
+			folder.Name = "SpeedBurstEffects"
+			folder.Parent = character
+		end
+
+		estela.Parent = character.SpeedBurstEffects
+
+		-- Sonido de activación
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://109008013684188" -- ID de ejemplo
+		sound.Volume = 0.8
+		sound.Parent = hrp
+		sound:Play()
+		Debris:AddItem(sound, sound.TimeLength)
+
+	else
+		-- Eliminar efectos de estela
+		local effectsFolder = character:FindFirstChild("SpeedBurstEffects")
+		if effectsFolder then
+			effectsFolder:Destroy()
+		end
+	end
+end,
+	-- Agregar estos handlers a la tabla abilityVisuals en GenericAbilityVisualClient
+	ZombieEsporasEvent = function(character, posicion, direccion)
+		-- Efecto visual de nube tóxica en cono
+		local cono = Instance.new("Part")
+		cono.Shape = Enum.PartType.Block
+		cono.Size = Vector3.new(1, 1, 8)
+		cono.CFrame = CFrame.new(posicion, posicion + direccion) * CFrame.new(0, 0, -4)
+		cono.Transparency = 1
+		cono.Anchored = true
+		cono.CanCollide = false
+		cono.Parent = workspace
+
+		-- Partículas verdes tóxicas
+		local particulas = Instance.new("ParticleEmitter")
+		particulas.Texture = "rbxassetid://241594419"
+		particulas.Color = ColorSequence.new(Color3.fromRGB(100, 200, 50))
+		particulas.Size = NumberSequence.new(2)
+		particulas.Transparency = NumberSequence.new(0.7)
+		particulas.Rate = 100
+		particulas.Lifetime = NumberRange.new(1.5)
+		particulas.Speed = NumberRange.new(5)
+		particulas.SpreadAngle = Vector2.new(60, 60)
+		particulas.Parent = cono
+
+		-- Sonido de exhalación
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://sustituir_con_id_real"
+		sound.Volume = 0.7
+		sound.Parent = cono
+		sound:Play()
+
+		Debris:AddItem(cono, 2)
+	end,
+
+	ZombieMasaEvent = function(arg1, arg2)
+		-- Si el primer argumento es una instancia (proyectil)
+		if typeof(arg1) == "Instance" and arg1:IsA("BasePart") then
+			local proyectil = arg1
+
+			-- Efecto visual del proyectil de masa infecciosa
+			local particulas = Instance.new("ParticleEmitter")
+			particulas.Texture = "rbxassetid://241594419"
+			particulas.Color = ColorSequence.new(Color3.fromRGB(150, 180, 30))
+			particulas.Size = NumberSequence.new(1.5)
+			particulas.Transparency = NumberSequence.new(0.5)
+			particulas.Rate = 30
+			particulas.Parent = proyectil
+
+			-- Sonido del proyectil (reemplazar con ID real)
+			local sound = Instance.new("Sound")
+			sound.SoundId = "rbxassetid://92896905039693" -- Ejemplo de ID, reemplazar con el correcto
+			sound.Volume = 0.5
+			sound.Parent = proyectil
+			sound:Play()
+
+			Debris:AddItem(sound, 5)
+
+			-- Si el primer argumento es "Charco" y el segundo es una posición
+		elseif type(arg1) == "string" and arg1 == "Charco" and typeof(arg2) == "Vector3" then
+			local posicion = arg2
+
+			-- Solo mostrar si está cerca del jugador local
+			local localCharacter = LocalPlayer.Character
+			if localCharacter and localCharacter:FindFirstChild("HumanoidRootPart") then
+				local distancia = (localCharacter.HumanoidRootPart.Position - posicion).Magnitude
+				if distancia > 30 then return end
+			end
+
+			-- Crear charco cuadrado plano
+			local charco = Instance.new("Part")
+			charco.Size = Vector3.new(8, 0.2, 8) -- Part cuadrado plano
+			charco.Color = Color3.fromRGB(100, 150, 30)
+			charco.Transparency = 0.6
+			charco.Material = Enum.Material.Slate
+			charco.Anchored = true
+			charco.CanCollide = false
+			charco.CFrame = CFrame.new(posicion)
+			charco.Parent = workspace
+
+			-- Primer ParticleEmitter: burbujas (imagen de burbujas)
+			local burbujas = Instance.new("ParticleEmitter")
+			burbujas.Texture = "rbxassetid://136171357470753" -- Textura de burbujas
+			burbujas.Color = ColorSequence.new(Color3.fromRGB(100, 255, 34)) -- Verde
+			burbujas.Size = NumberSequence.new(0.8)
+			burbujas.Transparency = NumberSequence.new(0.6)
+			burbujas.Rate = 20
+			burbujas.Lifetime = NumberRange.new(1)
+			burbujas.Parent = charco
+
+			-- Segundo ParticleEmitter: sparkles de Roblox (verde)
+			local sparkles = Instance.new("ParticleEmitter")
+			sparkles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+			sparkles.Color = ColorSequence.new(Color3.fromRGB(104, 255, 34)) -- Verde
+			sparkles.Size = NumberSequence.new(0.5)
+			sparkles.Transparency = NumberSequence.new(0.3)
+			sparkles.Rate = 15
+			sparkles.Lifetime = NumberRange.new(1, 2)
+			sparkles.Parent = charco
+
+			-- Sonido del charco (reemplazar con ID real)
+			local sound = Instance.new("Sound")
+			sound.SoundId = "rbxassetid://120393697424631" -- Ejemplo de ID, reemplazar con el correcto
+			sound.Volume = 0.7
+			sound.Parent = charco
+			sound:Play()
+
+			Debris:AddItem(charco, 8)
+			Debris:AddItem(sound, 8)
+		end
+	end,
+
+	-- Efecto visual del agarre (DURACIÓN EXTENDIDA A 6 SEGUNDOS)
+	ZombieAbrazoEvent = function(zombie, objetivo)
+		local hrpZombie = zombie:FindFirstChild("HumanoidRootPart")
+		local hrpObjetivo = objetivo:FindFirstChild("HumanoidRootPart")
+
+		if not hrpZombie or not hrpObjetivo then return end
+
+		-- Obtener servicios
+		local Debris = game:GetService("Debris")
+		local TweenService = game:GetService("TweenService")
+		local Players = game:GetService("Players")
+		local LocalPlayer = Players.LocalPlayer
+
+		-- Crear beam/ligamento entre zombie y objetivo
+		local attachment0 = Instance.new("Attachment")
+		attachment0.Parent = hrpZombie
+
+		local attachment1 = Instance.new("Attachment")
+		attachment1.Parent = hrpObjetivo
+
+		local beam = Instance.new("Beam")
+		beam.Attachment0 = attachment0
+		beam.Attachment1 = attachment1
+		beam.Color = ColorSequence.new(Color3.fromRGB(150, 0, 0))
+		beam.Width0 = 0.5
+		beam.Width1 = 0.5
+		beam.Texture = "rbxassetid://446111271"
+		beam.TextureSpeed = 2
+		beam.TextureLength = 2
+		beam.Parent = hrpZombie
+
+		-- Partículas de agarre en zombie
+		local particulasZombie = Instance.new("ParticleEmitter")
+		particulasZombie.Texture = "rbxassetid://241594419"
+		particulasZombie.Color = ColorSequence.new(Color3.fromRGB(200, 0, 0))
+		particulasZombie.Size = NumberSequence.new(1)
+		particulasZombie.Rate = 50
+		particulasZombie.Lifetime = NumberRange.new(0.8, 1.5)
+		particulasZombie.SpreadAngle = Vector2.new(45, 45)
+		particulasZombie.Speed = NumberRange.new(2, 5)
+		particulasZombie.Parent = hrpZombie
+
+		-- Partículas de agarre en objetivo
+		local particulasObjetivo = Instance.new("ParticleEmitter")
+		particulasObjetivo.Texture = "rbxassetid://241594419"
+		particulasObjetivo.Color = ColorSequence.new(Color3.fromRGB(150, 0, 50))
+		particulasObjetivo.Size = NumberSequence.new(0.8)
+		particulasObjetivo.Rate = 40
+		particulasObjetivo.Lifetime = NumberRange.new(0.6, 1.2)
+		particulasObjetivo.SpreadAngle = Vector2.new(60, 60)
+		particulasObjetivo.Speed = NumberRange.new(1, 3)
+		particulasObjetivo.Parent = hrpObjetivo
+
+		-- Efecto de pantalla si el objetivo es el jugador local
+		if objetivo == LocalPlayer.Character then
+			local screenGui = Instance.new("ScreenGui")
+			screenGui.Parent = LocalPlayer.PlayerGui
+
+			local frame = Instance.new("Frame")
+			frame.Size = UDim2.new(1, 0, 1, 0)
+			frame.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+			frame.BackgroundTransparency = 0.8
+			frame.BorderSizePixel = 0
+			frame.Parent = screenGui
+
+			-- Animación de pulsación
+			local tween = TweenService:Create(
+				frame,
+				TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+				{BackgroundTransparency = 0.7}
+			)
+			tween:Play()
+
+			Debris:AddItem(screenGui, 6)
+		end
+
+		-- Auto-destrucción después de 6 segundos
+		Debris:AddItem(beam, 6)
+		Debris:AddItem(attachment0, 6)
+		Debris:AddItem(attachment1, 6)
+		Debris:AddItem(particulasZombie, 6)
+		Debris:AddItem(particulasObjetivo, 6)
+	end,
+
+	-- 🔊 SONIDO DE MORDIDA (SE ACTIVA CUANDO COMIENZA LA ANIMACIÓN)
+	ZombieMordidaEvent = function(zombie, objetivo)
+		local hrpZombie = zombie:FindFirstChild("HumanoidRootPart")
+		if not hrpZombie then return end
+
+		-- Obtener servicios
+		local Debris = game:GetService("Debris")
+
+		-- Sonido de mordida
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://123603011110277"
+		sound.Volume = 0.8
+		sound.Parent = hrpZombie
+		sound:Play()
+
+		print("🔊 Sonido de mordida reproducido")
+
+		-- Auto-destrucción después de que termine el sonido (6 segundos para coincidir con la duración)
+		Debris:AddItem(sound, 6)
+	end,
+	
+	ZombieAlzamientoEvent = function(character, posicion)
+		-- Solo mostrar efectos si está cerca del jugador local
+		local localCharacter = LocalPlayer.Character
+		if localCharacter and localCharacter:FindFirstChild("HumanoidRootPart") then
+			local distancia = (localCharacter.HumanoidRootPart.Position - posicion).Magnitude
+			if distancia > 50 then return end
+		end
+
+		-- Efecto visual de la ultimate
+		local efecto = Instance.new("Part")
+		efecto.Size = Vector3.new(1, 1, 1)
+		efecto.Shape = Enum.PartType.Ball
+		efecto.Position = posicion
+		efecto.Transparency = 1
+		efecto.Anchored = true
+		efecto.CanCollide = false
+		efecto.Parent = workspace
+
+		-- Partículas de tierra moviéndose
+		local particulasTierra = Instance.new("ParticleEmitter")
+		particulasTierra.Texture = "rbxassetid://241594419"
+		particulasTierra.Color = ColorSequence.new(Color3.fromRGB(80, 60, 30))
+		particulasTierra.Size = NumberSequence.new(2)
+		particulasTierra.Transparency = NumberSequence.new(0.5)
+		particulasTierra.Rate = 100
+		particulasTierra.Lifetime = NumberRange.new(1.5)
+		particulasTierra.Speed = NumberRange.new(3)
+		particulasTierra.Parent = efecto
+
+		-- Efecto de suelo agrietándose
+		local grieta = Instance.new("Part")
+		grieta.Size = Vector3.new(15, 0.2, 15)
+		grieta.Shape = Enum.PartType.Cylinder
+		grieta.Color = Color3.fromRGB(60, 40, 20)
+		grieta.Material = Enum.Material.Slate
+		grieta.Transparency = 0.3
+		grieta.CFrame = CFrame.new(posicion) * CFrame.Angles(math.rad(90), 0, 0)
+		grieta.Anchored = true
+		grieta.CanCollide = false
+		grieta.Parent = workspace
+
+		-- Textura de grieta
+		local decal = Instance.new("Decal")
+		decal.Texture = "rbxassetid://77072565904861" -- Reemplaza con una textura de grieta
+		decal.Face = Enum.NormalId.Top
+		decal.Parent = grieta
+
+		-- Manos saliendo del suelo (más manos para más zombies)
+		for i = 1, 5 do
+			local mano = Instance.new("Part")
+			mano.Size = Vector3.new(1, 2, 1)
+			mano.Shape = Enum.PartType.Cylinder
+			mano.Color = Color3.fromRGB(80, 100, 40)
+			mano.Material = Enum.Material.Slate
+			mano.Position = posicion + Vector3.new(math.random(-7, 7), -1, math.random(-7, 7))
+			mano.Anchored = true
+			mano.CanCollide = false
+			mano.Parent = workspace
+
+			-- Animación de mano emergiendo
+			local tween = TweenService:Create(mano, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = mano.Position + Vector3.new(0, 1.5, 0)
+			})
+			tween:Play()
+
+			-- Animación de mano retirándose
+			local tween2 = TweenService:Create(mano, TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Position = mano.Position - Vector3.new(0, 3, 0)
+			})
+
+			-- Retrasar la retirada de la mano
+			delay(2, function()
+				tween2:Play()
+				tween2.Completed:Connect(function()
+					mano:Destroy()
+				end)
+			end)
+		end
+
+		-- Sonido de tierra moviéndose (reemplaza con un ID real)
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://85231686801331" -- Ejemplo de ID
+		sound.Volume = 1.0
+		sound.Parent = efecto
+		sound:Play()
+
+		-- Destruir efectos después de un tiempo
+		Debris:AddItem(efecto, 4)
+		Debris:AddItem(grieta, 4)
+		Debris:AddItem(sound, 4)
+
+		print("🔮 Efecto visual de El Alzamiento activado")
+	end,
+	
+	MireyaOndaVitalEvent = function(param1, param2, param3)
+		-- Determinar el tipo de evento basado en los parámetros
+		if type(param1) == "string" then
+			-- Este es el caso de curación/daño: param1 es acción, param2 es modelo, param3 es salud
+			local accion = param1
+			local modelo = param2
+			local salud = param3
+
+			print("[Cliente] Recibido evento de "..accion.." para:", modelo.Name)
+
+			-- Efecto visual según la acción
+			local hrp = modelo:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				local color = accion == "Curacion" and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+				local particulas = Instance.new("ParticleEmitter")
+				particulas.Texture = "rbxassetid://241594419"
+				particulas.Color = ColorSequence.new(color)
+				particulas.Size = NumberSequence.new(1.5)
+				particulas.Lifetime = NumberRange.new(1)
+				particulas.Rate = 30
+				particulas.Speed = NumberRange.new(2)
+				particulas.Parent = hrp
+				Debris:AddItem(particulas, 2)
+			end
+		else
+			-- Este es el caso del proyectil: recibimos posición, dirección y nivel
+			local posicion = param1
+			local direccion = param2
+			local nivel = param3
+
+			-- Verificar que son Vector3
+			if typeof(posicion) == "Vector3" and typeof(direccion) == "Vector3" then
+				print("[Cliente] Recibida posición y dirección para crear estela")
+				print("[Cliente] Posición:", posicion, "Dirección:", direccion)
+
+				-- Crear la estela
+				local estelaPart = game.ReplicatedStorage:FindFirstChild("Estela")
+				if not estelaPart or not estelaPart:IsA("Part") then
+					warn("❌ No se encontró la parte 'Estela' en ReplicatedStorage")
+					return
+				end
+
+				local estela = estelaPart:Clone()
+				-- 🔹 Crear Attachment 1
+				local attachment1 = Instance.new("Attachment")
+				attachment1.Name = "Attachment1"
+				attachment1.Position = Vector3.new(-5.8, 0.5, -4.866)
+				attachment1.Orientation = Vector3.new(0, -45, 91.08)
+				attachment1.Parent = estela
+
+				-- 🔹 Crear ParticleEmitter dentro del Attachment
+				local emitter = Instance.new("ParticleEmitter")
+				emitter.Texture = "rbxassetid://124071962357158"
+				emitter.Rate = 20
+				emitter.Lifetime = NumberRange.new(1)
+				emitter.Size = NumberSequence.new(1.2)
+				emitter.Speed = NumberRange.new(3)
+				emitter.LightEmission = 0.6
+				emitter.Parent = attachment1
+				
+				local attachment2 = Instance.new("Attachment")
+				attachment2.Name = "Attachment2"
+				attachment2.Position = Vector3.new(-3.622, 0.5, -2.864)
+				attachment2.Orientation = Vector3.new(0, -46.815, 91.08)
+				attachment2.Parent = estela
+
+				local emitter2 = Instance.new("ParticleEmitter")
+				emitter2.Texture = "rbxassetid://124071962357158"
+				emitter2.Rate = 20
+				emitter2.Lifetime = NumberRange.new(1)
+				emitter2.Size = NumberSequence.new(1.2)
+				emitter2.Speed = NumberRange.new(3)
+				emitter2.LightEmission = 0.6
+				emitter2.Parent = attachment2
+				
+				-- 🌀 Attachment 3
+				local attachment3 = Instance.new("Attachment")
+				attachment3.Name = "Attachment3"
+				attachment3.Position = Vector3.new(-4.622, 0.5, -1.864)
+				attachment3.Orientation = Vector3.new(0, -45, 91.08)
+				attachment3.Parent = estela
+
+				local emitter3 = Instance.new("ParticleEmitter")
+				emitter3.Texture = "rbxassetid://124071962357158"
+				emitter3.Rate = 20
+				emitter3.Lifetime = NumberRange.new(1)
+				emitter3.Size = NumberSequence.new(1.2)
+				emitter3.Speed = NumberRange.new(3)
+				emitter3.LightEmission = 0.6
+				emitter3.Parent = attachment3
+				
+				-- 🌀 Attachment 4
+				local attachment4 = Instance.new("Attachment")
+				attachment4.Name = "Attachment4"
+				attachment4.Position = Vector3.new(-1.622, 0.5, -3.864)
+				attachment4.Orientation = Vector3.new(0, -46.815, 91.08)
+				attachment4.Parent = estela
+
+				local emitter4 = Instance.new("ParticleEmitter")
+				emitter4.Texture = "rbxassetid://124071962357158"
+				emitter4.Rate = 20
+				emitter4.Lifetime = NumberRange.new(1)
+				emitter4.Size = NumberSequence.new(1.2)
+				emitter4.Speed = NumberRange.new(3)
+				emitter4.LightEmission = 0.6
+				emitter4.Parent = attachment4
+
+				-- 🌀 Attachment 5
+				local attachment5 = Instance.new("Attachment")
+				attachment5.Name = "Attachment5"
+				attachment5.Position = Vector3.new(-2.622, 0.5, -2.864)
+				attachment5.Orientation = Vector3.new(0, -46.815, 91.08)
+				attachment5.Parent = estela
+
+				local emitter5 = Instance.new("ParticleEmitter")
+				emitter5.Texture = "rbxassetid://124071962357158"
+				emitter5.Rate = 20
+				emitter5.Lifetime = NumberRange.new(1)
+				emitter5.Size = NumberSequence.new(1.2)
+				emitter5.Speed = NumberRange.new(3)
+				emitter5.LightEmission = 0.6
+				emitter5.Parent = attachment5
+				-- 🌀 Attachment 6
+				local attachment6 = Instance.new("Attachment")
+				attachment6.Name = "Attachment6"
+				attachment6.Position = Vector3.new(-6.622, 0.5, -0.864)
+				attachment6.Orientation = Vector3.new(0, -46.815, 91.08)
+				attachment6.Parent = estela
+
+				local emitter6 = Instance.new("ParticleEmitter")
+				emitter6.Texture = "rbxassetid://124071962357158"
+				emitter6.Rate = 20
+				emitter6.Lifetime = NumberRange.new(1)
+				emitter6.Size = NumberSequence.new(1.2)
+				emitter6.Speed = NumberRange.new(3)
+				emitter6.LightEmission = 0.6
+				emitter6.Parent = attachment6
+				
+				local coreEmitter = Instance.new("ParticleEmitter")
+				coreEmitter.Texture = "rbxassetid://7948622114"
+				coreEmitter.Size = NumberSequence.new(2)
+				coreEmitter.Lifetime = NumberRange.new(1)
+				coreEmitter.Rate = 15
+				coreEmitter.Speed = NumberRange.new(2)
+				coreEmitter.LightEmission = 0.7
+				coreEmitter.Parent = estela
+				
+				local sparkles = Instance.new("Sparkles")
+				sparkles.SparkleColor = Color3.fromRGB(255, 207, 229)
+				sparkles.Enabled = true
+				sparkles.Parent = estela
+				
+				-- 🌟 Attachment7 con ParticleEmitter y luz en la estela
+				local attachment7 = Instance.new("Attachment")
+				attachment7.Name = "PuntoLuz"
+				attachment7.CFrame = CFrame.new(-52.28, -50.824, 43.551) * CFrame.Angles(0, math.rad(-44.679), math.rad(90))
+				attachment7.Parent = estela
+
+				-- ✨ ParticleEmitter especial
+				local particle7 = Instance.new("ParticleEmitter")
+				particle7.Texture = "rbxassetid://114095825465951"
+				particle7.Size = NumberSequence.new(2)
+				particle7.Lifetime = NumberRange.new(1)
+				particle7.Rate = 40
+				particle7.Speed = NumberRange.new(3, 6)
+				particle7.Parent = attachment7
+
+				-- 💡 Luz suave
+				local light7 = Instance.new("PointLight")
+				light7.Color = Color3.fromRGB(255, 242, 252)
+				light7.Brightness = 3
+				light7.Range = 52
+				light7.Parent = attachment7
+				
+				-- 🌟 Attachment8 con ParticleEmitter y luz en la estela
+				local attachment8 = Instance.new("Attachment")
+				attachment8.Name = "PuntoLuz2"
+				attachment8.CFrame = CFrame.new(4.162, 0.5, 0.864) * CFrame.Angles(0, math.rad(-44.679), math.rad(90))
+				attachment8.Parent = estela
+
+				-- ✨ ParticleEmitter especial
+				local particle8 = Instance.new("ParticleEmitter")
+				particle8.Texture = "rbxassetid://114095825465951"
+				particle8.Size = NumberSequence.new(2)
+				particle8.Lifetime = NumberRange.new(1)
+				particle8.Rate = 40
+				particle8.Speed = NumberRange.new(3, 6)
+				particle8.Parent = attachment8
+
+				-- 💡 Luz suave
+				local light8 = Instance.new("PointLight")
+				light8.Color = Color3.fromRGB(255, 200, 230)
+				light8.Brightness = 3
+				light8.Range = 40
+				light8.Parent = attachment8
+				
+				-- 💫 Attachment9 con partículas grandes rosadas
+				local attachment9 = Instance.new("Attachment")
+				attachment9.Name = "EspiralRosada"
+				attachment9.CFrame = CFrame.new(-6.468, 0.5, -1.864) * CFrame.Angles(math.rad(-12.394), math.rad(138.533), math.rad(-81.716))
+				attachment9.Parent = estela
+
+				-- 🌸 ParticleEmitter de energía rosada
+				local particle9 = Instance.new("ParticleEmitter")
+				particle9.Texture = "rbxassetid://83252084737840"
+				particle9.Color = ColorSequence.new(Color3.fromRGB(252, 155, 255))
+				particle9.Size = NumberSequence.new(10)
+				particle9.Rotation = NumberRange.new(90)
+				particle9.Rate = 3
+				particle9.Lifetime = NumberRange.new(1.5)
+				particle9.Speed = NumberRange.new(1, 2)
+				particle9.Parent = attachment9
+
+				-- 💫 Attachment10 con partículas rosadas (segunda espiral)
+				local attachment10 = Instance.new("Attachment")
+				attachment10.Name = "EspiralRosada2"
+				attachment10.CFrame = CFrame.new(-7.135, 0.5, -5.255) * CFrame.Angles(math.rad(-12.394), math.rad(138.533), math.rad(-81.716))
+				attachment10.Parent = estela
+
+				-- 🌸 ParticleEmitter igual al anterior
+				local particle10 = Instance.new("ParticleEmitter")
+				particle10.Texture = "rbxassetid://83252084737840"
+				particle10.Color = ColorSequence.new(Color3.fromRGB(252, 155, 255))
+				particle10.Size = NumberSequence.new(10)
+				particle10.Rotation = NumberRange.new(90)
+				particle10.Rate = 3
+				particle10.Lifetime = NumberRange.new(1.5)
+				particle10.Speed = NumberRange.new(1, 2)
+				particle10.Parent = attachment10
+
+				local attachment11 = Instance.new("Attachment")
+				attachment11.Name = "EspiralRosada3"
+				attachment11.CFrame = CFrame.new(-6.468, 0.5, -1.864) * CFrame.Angles(math.rad(-12.394), math.rad(138.533), math.rad(-81.716))
+				attachment11.Parent = estela
+
+				-- 🌸 ParticleEmitter igual al anterior
+				local particle11 = Instance.new("ParticleEmitter")
+				particle11.Texture = "rbxassetid://83252084737840"
+				particle11.Color = ColorSequence.new(Color3.fromRGB(252, 155, 255))
+				particle11.Size = NumberSequence.new(10)
+				particle11.Rotation = NumberRange.new(90)
+				particle11.Rate = 3
+				particle11.Lifetime = NumberRange.new(1.5)
+				particle11.Speed = NumberRange.new(1, 2)
+				particle11.Parent = attachment11
+				
+				-- 🌠 Attachment12 (efecto de energía frontal)
+				local attachment12 = Instance.new("Attachment")
+				attachment12.Name = "EnergiaFrontal"
+				attachment12.CFrame = CFrame.new(0.703, 0.5, -3.864) * CFrame.Angles(math.rad(-80.807), math.rad(44.851), math.rad(0))
+				attachment12.Parent = estela
+
+				-- ⚡ ParticleEmitter para energía frontal
+				local particle12 = Instance.new("ParticleEmitter")
+				particle12.Texture = "rbxassetid://110128872135949"
+				particle12.Size = NumberSequence.new(7)
+				particle12.Rate = 5
+				particle12.Lifetime = NumberRange.new(0.75)
+				particle12.Speed = NumberRange.new(5)
+				particle12.Parent = attachment12
+
+				-- 🌠 Attachment13 (variante del efecto de energía frontal)
+				local attachment13 = Instance.new("Attachment")
+				attachment13.Name = "EnergiaFrontal2"
+				attachment13.CFrame = CFrame.new(-58.074, -50.824, 42.053) * CFrame.Angles(math.rad(9.931), math.rad(-19.597), math.rad(74.74))
+				attachment13.Parent = estela
+
+				-- ⚡ ParticleEmitter para la segunda energía frontal
+				local particle13 = Instance.new("ParticleEmitter")
+				particle13.Texture = "rbxassetid://110128872135949"
+				particle13.Size = NumberSequence.new(7)
+				particle13.Rate = 5
+				particle13.Lifetime = NumberRange.new(0.75)
+				particle13.Speed = NumberRange.new(5)
+				particle13.Parent = attachment13
+
+				-- ✨ Efecto adicional con nueva textura
+				local particle14 = Instance.new("ParticleEmitter")
+				particle14.Texture = "rbxassetid://100177489963349"
+				particle14.Size = NumberSequence.new(7)
+				particle14.Rate = 5
+				particle14.Lifetime = NumberRange.new(0.75)
+				particle14.Speed = NumberRange.new(5)
+				particle14.Parent = attachment13
+
+				-- 🌸 Attachment15: efecto con color rosado claro
+				local attachment15 = Instance.new("Attachment")
+				attachment15.Position = Vector3.new(0, 0, 0) -- sin orientación
+				attachment15.Orientation = Vector3.new(0, 0, 0)
+				attachment15.Parent = estela
+
+				local particle15 = Instance.new("ParticleEmitter")
+				particle15.Texture = "rbxassetid://241594419"
+				particle15.Color = ColorSequence.new(Color3.fromRGB(255, 237, 254))
+				particle15.Size = NumberSequence.new(6)
+				particle15.Rate = 16
+				particle15.Transparency = NumberSequence.new(0.8)
+				particle15.Speed = NumberRange.new(3)
+				particle15.Parent = attachment15
+				
+				-- 🌟 Decal superior en la estela
+				local decalTop = Instance.new("Decal")
+				decalTop.Texture = "rbxassetid://79915930408915"
+				decalTop.Face = Enum.NormalId.Top
+				decalTop.Parent = estela
+
+
+				-- Calcular objetivo y orientación
+				local objetivo = posicion + (direccion * (10 + nivel * 2))
+				local cframeBase = CFrame.lookAt(posicion, objetivo, Vector3.new(0, 1, 0))
+				local giro = math.rad(120)
+				estela.CFrame = cframeBase * CFrame.Angles(0, giro, 0)
+				estela.Parent = workspace
+
+				-- AÑADIR MOVIMIENTO A LA ESTELA VISUAL
+				local velocidad = 50 + nivel * 5  -- Misma velocidad que en el servidor
+				local bodyVelocity = Instance.new("BodyVelocity")
+				bodyVelocity.Velocity = direccion * velocidad
+				bodyVelocity.MaxForce = Vector3.new(100000, 100000, 100000)
+				bodyVelocity.Parent = estela
+
+				-- Destruir después de un tiempo (igual que en el servidor)
+				local tiempoInicio = time()
+				local distanciaMaxima = 100 + nivel * 10
+
+				-- Conexión para destruir la estela visual después de un tiempo
+				local conexion
+				conexion = game:GetService("RunService").Heartbeat:Connect(function()
+					if not estela or not estela.Parent then
+						if conexion then conexion:Disconnect() end
+						return
+					end
+
+					-- Destruir después de tiempo o distancia
+					if time() - tiempoInicio > (4 + nivel * 0.5) or (estela.Position - posicion).Magnitude > distanciaMaxima then
+						if conexion then conexion:Disconnect() end
+						estela:Destroy()
+					end
+				end)
+			else
+				warn("❌ Error: Posición o dirección no son Vector3")
+			end
+		end
+	end,
+	MireyaSemillaRenovacionEvent = function(param1, param2, param3, param4)
+		-- Determinar el tipo de evento
+		if type(param1) == "string" then
+			-- Florecimiento o Explosión
+			local accion = param1
+			local modelo = param2
+			local posicion = param3
+			local nivel = param4
+
+			print("[Cliente] Efecto SemillaRenovacion - Acción:", accion, "Nivel:", nivel)
+
+			if accion == "Florecer" then
+				-- 🌸 EFECTO DE FLORECIMIENTO MEJORADO CON TU SEMILLA (PART)
+				local hrp = modelo:FindFirstChild("HumanoidRootPart")
+				if not hrp then return end
+
+				-- Cargar y clonar tu part de semilla
+				local semillaPart = game.ReplicatedStorage:FindFirstChild("Semilla")
+				if semillaPart and semillaPart:IsA("Part") then
+					local semilla = semillaPart:Clone()
+					semilla.Name = "SemillaFlorecida"
+					semilla.CFrame = hrp.CFrame + Vector3.new(0, 2, 0)
+					semilla.Anchored = true
+					semilla.CanCollide = false
+					semilla.Parent = workspace
+
+					-- Partículas de pétalos mágicos que salen de la semilla
+					local particulasPetalos = Instance.new("ParticleEmitter")
+					particulasPetalos.Texture = "rbxassetid://241594419"
+					particulasPetalos.Color = ColorSequence.new{
+						ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+						ColorSequenceKeypoint.new(0.5, Color3.fromRGB(144, 238, 144)),
+						ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 205, 50))
+					}
+					particulasPetalos.Size = NumberSequence.new(1.5)
+					particulasPetalos.Lifetime = NumberRange.new(1.5, 3)
+					particulasPetalos.Rate = 80 + (nivel * 10)
+					particulasPetalos.Speed = NumberRange.new(5, 10)
+					particulasPetalos.SpreadAngle = Vector2.new(45, 45)
+					particulasPetalos.Rotation = NumberRange.new(0, 360)
+					particulasPetalos.Parent = semilla
+
+					-- Partículas de energía curativa
+					local particulasEnergia = Instance.new("ParticleEmitter")
+					particulasEnergia.Texture = "rbxassetid://110128872135949"
+					particulasEnergia.Color = ColorSequence.new(Color3.fromRGB(173, 255, 47))
+					particulasEnergia.Size = NumberSequence.new(2)
+					particulasEnergia.Lifetime = NumberRange.new(1, 2)
+					particulasEnergia.Rate = 40 + (nivel * 5)
+					particulasEnergia.Speed = NumberRange.new(3, 7)
+					particulasEnergia.LightEmission = 0.8
+					particulasEnergia.Parent = semilla
+
+					-- Luz ambiental
+					local luz = Instance.new("PointLight")
+					luz.Color = Color3.fromRGB(144, 238, 144)
+					luz.Brightness = 5 + (nivel * 0.5)
+					luz.Range = 15 + (nivel * 2)
+					luz.Parent = semilla
+
+					-- Animación de crecimiento de la semilla
+					local tweenInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+					local tween = game:GetService("TweenService"):Create(semilla, tweenInfo, {
+						Size = semilla.Size * (1.5 + nivel * 0.1),
+						Transparency = 1
+					})
+					tween:Play()
+
+					-- Destruir después de la animación
+					game:GetService("Debris"):AddItem(semilla, 2)
+
+				else
+					warn("❌ No se encontró la parte 'Semilla' en ReplicatedStorage o no es una Part")
+					-- Fallback: crear una semilla básica
+					local semilla = Instance.new("Part")
+					semilla.Name = "SemillaFlorecida"
+					semilla.Size = Vector3.new(1, 1, 1)
+					semilla.Shape = Enum.PartType.Ball
+					semilla.Material = Enum.Material.Neon
+					semilla.BrickColor = BrickColor.new("Bright green")
+					semilla.CFrame = hrp.CFrame + Vector3.new(0, 2, 0)
+					semilla.Anchored = true
+					semilla.CanCollide = false
+					semilla.Transparency = 0.3
+					semilla.Parent = workspace
+
+					-- (Agregar aquí las partículas y efectos del fallback...)
+					game:GetService("Debris"):AddItem(semilla, 2)
+				end
+
+			elseif accion == "Explotar" then
+				-- 💥 EFECTO DE EXPLOSIÓN MEJORADO (mantener igual)
+				-- ... (código de explosión igual que antes)
+			end
+		else
+			-- 🌱 EFECTO DE APLICACIÓN DE SEMILLA - CORREGIDO PARA SEGUIR AL PERSONAJE
+			local target = param1
+			local posicion = param2
+			local accion = param3
+			local nivel = param4
+
+			print("[Cliente] Aplicando semilla a:", target.Name, "Nivel:", nivel)
+
+			local hrp = target:FindFirstChild("HumanoidRootPart")
+			if not hrp then return end
+
+			-- Cargar tu part personalizada de semilla
+			local semillaPart = game.ReplicatedStorage:FindFirstChild("Semilla")
+			if not semillaPart or not semillaPart:IsA("Part") then
+				warn("❌ No se encontró la parte 'Semilla' en ReplicatedStorage o no es una Part")
+				return
+			end
+
+			-- Clonar y configurar la semilla
+			local semilla = semillaPart:Clone()
+			semilla.Name = "SemillaRenovacion"
+			semilla.Size = semillaPart.Size -- Mantener el tamaño original
+			semilla.CFrame = hrp.CFrame + Vector3.new(0, 3, 0)
+			semilla.Anchored = false  -- 🔥 IMPORTANTE: No anclada para poder seguir al personaje
+			semilla.CanCollide = false
+			semilla.Parent = workspace
+
+			-- 🔥 NUEVO: Crear un BodyPosition para que la semilla siga al personaje
+			local bodyPosition = Instance.new("BodyPosition")
+			bodyPosition.MaxForce = Vector3.new(40000, 40000, 40000)  -- Fuerza suficiente para seguir
+			bodyPosition.Parent = semilla
+
+			-- 🔥 NUEVO: Conectar al Heartbeat para actualizar la posición de la semilla
+			local conexionMovimiento
+			conexionMovimiento = game:GetService("RunService").Heartbeat:Connect(function()
+				if semilla and semilla.Parent and hrp and hrp.Parent then
+					-- Calcular posición objetivo (sobre el personaje con flotación suave)
+					local offsetY = 3 + math.sin(time() * 4) * 0.3  -- Flotación suave
+					bodyPosition.Position = hrp.Position + Vector3.new(0, offsetY, 0)
+				else
+					-- Si la semilla o el personaje ya no existen, desconectar
+					if conexionMovimiento then
+						conexionMovimiento:Disconnect()
+					end
+				end
+			end)
+
+			-- Partículas de energía verde alrededor de tu semilla
+			local particulasEnergia = Instance.new("ParticleEmitter")
+			particulasEnergia.Texture = "rbxassetid://110128872135949"
+			particulasEnergia.Color = ColorSequence.new(Color3.fromRGB(144, 238, 144))
+			particulasEnergia.Size = NumberSequence.new(1)
+			particulasEnergia.Lifetime = NumberRange.new(1, 2)
+			particulasEnergia.Rate = 30 + (nivel * 5)
+			particulasEnergia.Speed = NumberRange.new(2, 5)
+			particulasEnergia.SpreadAngle = Vector2.new(30, 30)
+			particulasEnergia.Parent = semilla
+
+			-- Partículas de polvo mágico
+			local particulasPolvo = Instance.new("ParticleEmitter")
+			particulasPolvo.Texture = "rbxassetid://241594419"
+			particulasPolvo.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+			particulasPolvo.Size = NumberSequence.new(0.5)
+			particulasPolvo.Lifetime = NumberRange.new(0.5, 1.5)
+			particulasPolvo.Rate = 20 + (nivel * 3)
+			particulasPolvo.Speed = NumberRange.new(1, 3)
+			particulasPolvo.Parent = semilla
+
+			-- Luz suave que sigue a la semilla
+			local luzSemilla = Instance.new("PointLight")
+			luzSemilla.Color = Color3.fromRGB(144, 238, 144)
+			luzSemilla.Brightness = 3 + (nivel * 0.3)
+			luzSemilla.Range = 8 + (nivel * 1)
+			luzSemilla.Parent = semilla
+
+			-- Animación de rotación lenta
+			local tweenRotacion = game:GetService("TweenService"):Create(
+				semilla, 
+				TweenInfo.new(4, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true), 
+				{ Orientation = Vector3.new(0, 360, 0) }
+			)
+			tweenRotacion:Play()
+
+			-- 🔊 SONIDO: Añadir sonido a la semilla
+			local sonidoSemilla = Instance.new("Sound")
+			sonidoSemilla.SoundId = "rbxassetid://111513041969844"
+			sonidoSemilla.Volume = 0.8
+			sonidoSemilla.Looped = true
+			sonidoSemilla.Parent = semilla
+			sonidoSemilla:Play()
+
+			-- 🔥 NUEVO: Función para limpiar todos los efectos
+			local function limpiarEfectos()
+				if conexionMovimiento then
+					conexionMovimiento:Disconnect()
+				end
+				if semilla and semilla.Parent then
+					semilla:Destroy()
+				end
+			end
+
+			-- Destruir después del tiempo de florecimiento (3 segundos)
+			-- También verificar si el target ya no existe
+			local tiempoInicio = time()
+			local conexionVerificacion
+			conexionVerificacion = game:GetService("RunService").Heartbeat:Connect(function()
+				-- Verificar si ha pasado el tiempo o si el target ya no existe
+				if time() - tiempoInicio >= 3 or not target or not target.Parent or not hrp or not hrp.Parent then
+					if conexionVerificacion then
+						conexionVerificacion:Disconnect()
+					end
+					limpiarEfectos()
+				end
+			end)
+
+			-- También agregar a Debris por si acaso
+			game:GetService("Debris"):AddItem(semilla, 4)
+		end
+	end,
+
+	MireyaLazosFeEvent = function(param1, param2, param3)
+		-- ¡CORRECCIÓN DEL SEGUNDO ERROR! Estándar: param1 siempre es acción
+		if type(param1) == "string" then
+			local accion = param1
+			local character = param2
+			local target = param3
+
+			if accion == "Desconectar" then
+				-- Eliminar efecto de lazo
+				if target and target:FindFirstChild("LazoFeBeam") then
+					target.LazoFeBeam:Destroy()
+				end
+				if character and character:FindFirstChild("LazoFeBeam") then
+					character.LazoFeBeam:Destroy()
+				end
+			else
+				-- Crear efecto de lazo
+				if character and character:FindFirstChild("HumanoidRootPart") and target and target:FindFirstChild("HumanoidRootPart") then
+					local beam = Instance.new("Beam")
+					beam.Name = "LazoFeBeam"
+					beam.Color = ColorSequence.new(Color3.fromRGB(255, 200, 0))
+					beam.Width0 = 0.5
+					beam.Width1 = 0.5
+					beam.FaceCamera = true
+
+					local attachment0 = Instance.new("Attachment")
+					attachment0.Parent = character.HumanoidRootPart
+					attachment0.Position = Vector3.new(0, 1, 0)
+
+					local attachment1 = Instance.new("Attachment")
+					attachment1.Parent = target.HumanoidRootPart
+					attachment1.Position = Vector3.new(0, 1, 0)
+
+					beam.Attachment0 = attachment0
+					beam.Attachment1 = attachment1
+					beam.Parent = character
+
+					-- Efecto de partículas
+					local particulas0 = Instance.new("ParticleEmitter")
+					particulas0.Texture = "rbxassetid://241594419"
+					particulas0.Color = ColorSequence.new(Color3.fromRGB(255, 200, 0))
+					particulas0.Size = NumberSequence.new(1)
+					particulas0.Lifetime = NumberRange.new(0.5)
+					particulas0.Rate = 20
+					particulas0.Speed = NumberRange.new(2)
+					particulas0.Parent = attachment0
+
+					local particulas1 = Instance.new("ParticleEmitter")
+					particulas1.Texture = "rbxassetid://241594419"
+					particulas1.Color = ColorSequence.new(Color3.fromRGB(255, 200, 0))
+					particulas1.Size = NumberSequence.new(1)
+					particulas1.Lifetime = NumberRange.new(0.5)
+					particulas1.Rate = 20
+					particulas1.Speed = NumberRange.new(2)
+					particulas1.Parent = attachment1
+				end
+			end
+		end
+	end,
+
+	MireyaFusionSagradaEvent = function(param1, param2, param3, param4, param5)
+		if type(param1) == "string" then
+			local accion = param1
+			local character = param2
+			local target = param3
+			local nivel = param4
+			local playerId = param5
+
+			-- Solo aplicar efectos de cámara si es para el jugador local
+			local esParaJugadorLocal = (playerId and playerId == LocalPlayer.UserId) or not playerId
+
+			if accion == "Finalizar" then
+				-- Eliminar efectos de fusión
+				if target and target:FindFirstChild("ribbon wings") then
+					target:FindFirstChild("ribbon wings"):Destroy()
+				end
+
+				-- Restaurar cámara y controles si es el personaje local
+				if esParaJugadorLocal and character == LocalPlayer.Character then
+					-- Restaurar cámara a Mireya
+					local humanoide = character:FindFirstChildOfClass("Humanoid")
+					if humanoide then
+						workspace.CurrentCamera.CameraSubject = humanoide
+					end
+
+					-- Restaurar controles de movimiento
+					ContextActionService:UnbindAction("BloquearMovimiento")
+				end
+			else
+				-- Crear efecto visual de fusión
+				if target and target:FindFirstChild("HumanoidRootPart") then
+					-- Efecto de aura en el aliado
+					local aura = Instance.new("ParticleEmitter")
+					aura.Texture = "rbxassetid://241594419"
+					aura.Color = ColorSequence.new(Color3.fromRGB(255, 255, 200))
+					aura.Size = NumberSequence.new(2)
+					aura.Lifetime = NumberRange.new(1)
+					aura.Rate = 30
+					aura.Speed = NumberRange.new(0)
+					aura.Parent = target.HumanoidRootPart
+					Debris:AddItem(aura, 8)
+
+					-- Efecto de partículas en Mireya (semi-transparente)
+					if character and character:FindFirstChild("HumanoidRootPart") then
+						local particulasMireya = Instance.new("ParticleEmitter")
+						particulasMireya.Texture = "rbxassetid://241594419"
+						particulasMireya.Color = ColorSequence.new(Color3.fromRGB(200, 200, 255))
+						particulasMireya.Size = NumberSequence.new(1.5)
+						particulasMireya.Lifetime = NumberRange.new(0.7)
+						particulasMireya.Rate = 20
+						particulasMireya.Speed = NumberRange.new(1)
+						particulasMireya.Parent = character.HumanoidRootPart
+						Debris:AddItem(particulasMireya, 8)
+					end
+				end
+
+				-- Transferir cámara y bloquear controles si es el personaje local
+				if esParaJugadorLocal and character == LocalPlayer.Character then
+					-- Transferir cámara al aliado
+					local humanoideTarget = target:FindFirstChildOfClass("Humanoid")
+					if humanoideTarget then
+						workspace.CurrentCamera.CameraSubject = humanoideTarget
+					end
+
+					-- Bloquear controles de movimiento
+					ContextActionService:BindAction("BloquearMovimiento", function()
+						return Enum.ContextActionResult.Sink
+					end, false, Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D, Enum.KeyCode.Space)
+				end
+			end
+		end
+	end,
+}
+
+
+-- Connect all RemoteEvents
+for eventName, handler in abilityVisuals do
+	local remote = ReplicatedStorage:FindFirstChild(eventName)
+	if remote then
+		remote.OnClientEvent:Connect(handler)
+		print("✅ Conectado RemoteEvent: " .. eventName)
+	else
+		warn("❌ No se encontró RemoteEvent: " .. eventName)
+	end
+end
+-- Script adicional para manejar VisionReducida
+local function manejarVisionReducida(character)
+	if not character then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	-- Escuchar cambios en el atributo VisionReducida
+	character:GetAttributeChangedSignal("VisionReducida"):Connect(function()
+		local visionReducida = character:GetAttribute("VisionReducida")
+
+		if visionReducida then
+			-- Aplicar efecto de visión reducida
+			-- Puedes agregar aquí efectos de post-processing o cambios visuales
+			print("🔍 Visión reducida activada para: " .. character.Name)
+
+			-- Ejemplo: aplicar un efecto de blur o oscurecimiento
+			if character == LocalPlayer.Character then
+				-- Aquí podrías agregar efectos de pantalla para el jugador local
+			end
+		else
+			-- Remover efecto de visión reducida
+			print("🔍 Visión normal restaurada para: " .. character.Name)
+
+			-- Remover cualquier efecto visual aplicado
+			if character == LocalPlayer.Character then
+				-- Aquí podrías remover efectos de pantalla para el jugador local
+			end
+		end
+	end)
+end
+
+-- Configurar para el personaje actual y futuros personajes
+if LocalPlayer.Character then
+	manejarVisionReducida(LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(manejarVisionReducida)
+
+print("✅ GenericAbilityVisualClient cargado - DebrisModule completo integrado")
+--🚀 Cómo usar el DebrisModule en nuevos personajes:
+--	Para agregar un nuevo personaje, solo necesitas:
+--
+--	Crear el RemoteEvent en ReplicatedStorage
+
+--Agregar el handler en abilityVisuals
+
+--Llamar a las funciones del DebrisModule que necesites
+
+--Ejemplo rápido:
+
+--	lua
+--NuevoPersonajeHabilidadEvent = function(position, target)
+	-- Elige efectos del DebrisModule:
+--	DebrisModule.sphereExp(position, 5, 30, Color3.fromRGB(255, 0, 255))
+--	DebrisModule.lightningWaves(position, 8, Color3.fromRGB(255, 100, 255))
+--	DebrisModule.Shockwave(position, 10, 40)
+--end
