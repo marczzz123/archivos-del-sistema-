@@ -1,0 +1,143 @@
+-- 📁 Script en ServerScriptService
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CombatEvent = ReplicatedStorage.Remotes:WaitForChild("CombatEvent")
+local CombatManager = require(script.Parent:WaitForChild("CombatManager"))
+local BasicAttackCooldown = require(script.Parent:WaitForChild("BasicAttackCooldown"))
+
+-- 🎯 Función para determinar tipo de rig
+local function obtenerTipoRig(character)
+	if not character then return "R6" end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	return humanoid and humanoid.RigType.Name or "R6"
+end
+
+-- 🎯 Función para obtener animación de ATAQUE desde la carpeta del personaje
+local function obtenerAnimacionAtaque(character, eventType)
+	if not character then
+		warn("❌ [CombatEvent] No se puede obtener animación: character es nulo")
+		return nil
+	end
+
+	local tipoRig = obtenerTipoRig(character)
+	local nombreAnimacion = (tipoRig == "R15") and "n" .. string.sub(eventType, 2) or eventType
+
+	local carpetaAnimaciones = character:FindFirstChild("AnimacionesAtaque")
+	if not carpetaAnimaciones then
+		warn("❌ [CombatEvent] No se encontró la carpeta 'AnimacionesAtaque' en " .. character.Name)
+		return nil
+	end
+
+	local animacion = carpetaAnimaciones:FindFirstChild(nombreAnimacion)
+	if not animacion then
+		warn("❌ [CombatEvent] No se encontró la animación " .. nombreAnimacion .. " en " .. character.Name)
+		return nil
+	end
+
+	print("✅ [CombatEvent] Animación encontrada: " .. nombreAnimacion .. " para " .. character.Name)
+	return animacion
+end
+
+-- ⚡ Función para manejar ataques básicos
+local function manejarAtaqueBasico(plr, eventType, combo)
+	print("🎯 [CombatEvent] Procesando ataque: " .. eventType .. " para " .. plr.Name)
+
+	local Char = plr.Character or plr.CharacterAdded:Wait()
+
+	if not BasicAttackCooldown.canAttack(Char) then
+		print("⏳ [CombatEvent] Cooldown activo para: " .. plr.Name)
+		return
+	end
+
+	-- 🎭 ANIMACIÓN DE ATAQUE
+	local animacionAtaque = obtenerAnimacionAtaque(Char, eventType)
+	if animacionAtaque then
+		local Hum = Char:WaitForChild("Humanoid")
+		local track = Hum:LoadAnimation(animacionAtaque)
+		track:Play()
+		print("🎭 [CombatEvent] Animación reproducida: " .. animacionAtaque.Name)
+	end
+
+	-- 🧮 CALCULAR DAÑO POR FUERZA
+	local fuerza = Char:GetAttribute("Fuerza") or 0
+	local nivel = Char:GetAttribute("Nivel") or 1
+	local nivelMultiplier = 1 + ((nivel - 1) * 0.05)
+	local damage = math.floor(fuerza * nivelMultiplier)
+
+	print("💪 [CombatEvent] Cálculo de daño - Fuerza: " .. fuerza .. " Nivel: " .. nivel .. " Daño: " .. damage)
+
+	-- 🎯 CONFIGURACIÓN DE IMPACTO
+	local configImpacto = {
+		knockbackPower = 15,
+		impactoDuration = 0.3,
+		ragdoll = false,
+		ragdollDuration = 1.5,
+		knockbackAttacker = nil
+	}
+
+	-- Configuraciones específicas por ataque
+	if eventType == "M1" or eventType == "n1" then
+		configImpacto.knockbackPower = 15
+		configImpacto.impactoDuration = 0.3
+		print("🥊 [CombatEvent] Ataque básico M1/n1")
+
+	elseif eventType == "M2" or eventType == "n2" then
+		configImpacto.knockbackPower = 18
+		configImpacto.impactoDuration = 0.4
+		print("🥊 [CombatEvent] Ataque básico M2/n2")
+
+	elseif eventType == "M3" or eventType == "n3" then
+		configImpacto.knockbackPower = 20
+		configImpacto.impactoDuration = 0.5
+		print("🥊 [CombatEvent] Ataque básico M3/n3")
+
+	elseif eventType == "M4" or eventType == "n4" then
+		configImpacto.knockbackPower = 25
+		configImpacto.impactoDuration = 0.6
+		print("🥊 [CombatEvent] Ataque básico M4/n4")
+
+		if combo == 0 or combo == 1 or combo == 2 or combo == 3 then
+			configImpacto.knockbackPower = 50
+			configImpacto.impactoDuration = 0.8
+			configImpacto.ragdoll = true
+			configImpacto.knockbackAttacker = 15
+			print("💥 [CombatEvent] COMBO ACTIVADO! Knockback aumentado")
+		end
+	end
+
+	-- 🔥 EJECUTAR ATAQUE
+	local resultado = CombatManager.AtaqueConImpacto(plr, damage, configImpacto)
+
+	if resultado then
+		print("✅ [CombatEvent] Ataque ejecutado exitosamente - " .. eventType .. " - Daño: " .. damage)
+	else
+		warn("❌ [CombatEvent] El ataque no pudo ejecutarse")
+	end
+end
+
+-- 🎯 CONEXIÓN PRINCIPAL
+CombatEvent.OnServerEvent:Connect(function(plr, eventType, valor, combo)
+	print("🎯 [CombatEvent] Evento recibido - Jugador: " .. plr.Name .. " - Tipo: " .. tostring(eventType) .. " - Combo: " .. tostring(combo))
+
+	-- Validar que el jugador tenga character
+	if not plr.Character then
+		warn("❌ [CombatEvent] Jugador sin character: " .. plr.Name)
+		return
+	end
+
+	local eventosAtaque = {"M1", "M2", "M3", "M4", "n1", "n2", "n3", "n4"}
+	if table.find(eventosAtaque, eventType) then
+		-- Ejecutar en un task spawn para no bloquear
+		task.spawn(function()
+			manejarAtaqueBasico(plr, eventType, combo)
+		end)
+	else
+		warn("⚠️ [CombatEvent] Evento de ataque no reconocido: " .. tostring(eventType))
+	end
+end)
+
+-- 🔥 INICIALIZACIÓN
+print("✅ [CombatEvent] Cargado en ServerScriptService - Sistema listo")
+print("   🎯 Eventos soportados: M1, M2, M3, M4, n1, n2, n3, n4")
+print("   💪 Sistema de daño por Fuerza: ACTIVADO")
+print("   🎭 Animaciones R6/R15: ACTIVADO")
+print("   💥 Sistema de Impacto: ACTIVADO")
