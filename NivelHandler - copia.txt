@@ -1,0 +1,212 @@
+--ServerScriptService/NivelHandler
+local nivelHandler = {}
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+-- Obtener módulos desde ReplicatedStorage
+local Modulos = ReplicatedStorage:WaitForChild("Modulos")
+local nivelConfig = require(Modulos:WaitForChild("NivelConfig"))
+local statsHeroes = require(Modulos:WaitForChild("StatsHeroes"))
+
+-- RemoteEvents
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local RecalcularStatsRE = RemoteEvents:WaitForChild("RecalcularStats")
+local FXSubidaNivelRE = RemoteEvents:FindFirstChild("FXSubidaNivel")
+local StatsUpdatedRE = RemoteEvents:FindFirstChild("StatsUpdated") or Instance.new("RemoteEvent")
+StatsUpdatedRE.Name = "StatsUpdated"
+StatsUpdatedRE.Parent = RemoteEvents
+
+-- RemoteEvent para ganar XP
+local GanarXPRE = RemoteEvents:FindFirstChild("GanarXP") or Instance.new("RemoteEvent")
+GanarXPRE.Name = "GanarXP"
+GanarXPRE.Parent = RemoteEvents
+
+-- BindableEvent para cambios de stats base
+local StatsBaseActualizados = Instance.new("BindableEvent")
+StatsBaseActualizados.Name = "StatsBaseActualizados"
+nivelHandler.StatsBaseActualizados = StatsBaseActualizados
+
+-- Evento para ganar XP desde otros sistemas
+GanarXPRE.OnServerEvent:Connect(function(player, cantidadXP)
+	local character = player.Character
+	if character and cantidadXP and cantidadXP > 0 then
+		nivelHandler.AgregarExperiencia(character, cantidadXP)
+	end
+end)
+
+-- Agrega experiencia al personaje
+function nivelHandler.AgregarExperiencia(personaje, cantidad)
+	if personaje then
+		local nombre = personaje.Name
+		if string.find(nombre, "T_Torre") == 1 or
+			string.find(nombre, "V_Torre") == 1 or
+			string.find(nombre, "T_Dragon") == 1 or
+			string.find(nombre, "V_Dragon") == 1 then
+			return
+		end
+	end
+
+	local xpActual = personaje:GetAttribute("Experiencia") or 0
+	local nuevaXP = xpActual + cantidad
+	personaje:SetAttribute("Experiencia", nuevaXP)
+	nivelHandler.VerificarSubidaDeNivel(personaje)
+end
+
+-- Verifica si sube de nivel
+function nivelHandler.VerificarSubidaDeNivel(personaje)
+	local nivelActual = personaje:GetAttribute("Nivel") or 1
+	local xpActual = personaje:GetAttribute("Experiencia") or 0
+	local nivelInicial = nivelActual
+	local maxNivel = nivelConfig.NivelMaximo or 100
+	local nivelesSubidos = 0
+
+	while nivelesSubidos < 50 do
+		local siguienteNivel = nivelActual + 1
+		if siguienteNivel > maxNivel then
+			break
+		end
+
+		local xpNecesaria = nivelConfig.RequerimientosXP[siguienteNivel]
+		if xpNecesaria and xpActual >= xpNecesaria then
+			xpActual = xpActual - xpNecesaria
+			personaje:SetAttribute("Nivel", siguienteNivel)
+			personaje:SetAttribute("XPMax", xpNecesaria)
+			nivelHandler.ActualizarStats(personaje, siguienteNivel)
+			nivelHandler.MostrarFXSubidaNivel(personaje)
+
+			nivelActual = siguienteNivel
+			nivelesSubidos += 1
+		else
+			personaje:SetAttribute("XPMax", xpNecesaria or 100)
+			break
+		end
+	end
+
+	personaje:SetAttribute("Experiencia", xpActual)
+end
+
+-- Efecto de subida de nivel
+function nivelHandler.MostrarFXSubidaNivel(personaje)
+	local player = Players:GetPlayerFromCharacter(personaje)
+	if player and FXSubidaNivelRE then
+		FXSubidaNivelRE:FireClient(player)
+	else
+		local part = personaje:FindFirstChild("HumanoidRootPart") or personaje:FindFirstChildWhichIsA("BasePart")
+		if part then
+			local sound = Instance.new("Sound")
+			sound.SoundId = "rbxassetid://103179906368901"
+			sound.Volume = 0.5
+			sound.Parent = part
+			sound:Play()
+			game:GetService("Debris"):AddItem(sound, 3)
+		end
+	end
+end
+
+-- Actualiza stats base por nivel
+function nivelHandler.ActualizarStats(personaje, nivel)
+	local tipoHeroe = personaje:GetAttribute("NombreReal")
+	if not tipoHeroe then
+		local player = Players:GetPlayerFromCharacter(personaje)
+		if player then
+			tipoHeroe = player:GetAttribute("NombreReal") or "Spartan"
+			personaje:SetAttribute("NombreReal", tipoHeroe)
+		else
+			tipoHeroe = "Spartan"
+			personaje:SetAttribute("NombreReal", tipoHeroe)
+		end
+	end
+
+	local stats = statsHeroes[tipoHeroe] and statsHeroes[tipoHeroe][nivel]
+	if not stats then return false end
+
+	local player = Players:GetPlayerFromCharacter(personaje)
+	for nombreStat, valor in stats do
+		personaje:SetAttribute("Base" .. nombreStat, valor)
+		if player then
+			player:SetAttribute("Base" .. nombreStat, valor)
+		end
+	end
+
+	if player then
+		StatsBaseActualizados:Fire(player)
+
+		if StatsUpdatedRE and StatsUpdatedRE:IsA("RemoteEvent") then
+			task.delay(0.5, function()
+				if personaje and personaje.Parent then
+					StatsUpdatedRE:FireClient(player, {
+						Fuerza = personaje:GetAttribute("Fuerza") or 0,
+						Defensa = personaje:GetAttribute("Defensa") or 0,
+						VidaMax = personaje:GetAttribute("VidaMax") or 0,
+						Nivel = personaje:GetAttribute("Nivel") or 1
+					})
+				end
+			end)
+		end
+
+		local sistemaItems = require(game:GetService("ServerScriptService"):WaitForChild("SistemaDeltems"))
+		sistemaItems.recalcularStats(player)
+	else
+		nivelHandler.CalcularStatsManualmente(personaje)
+	end
+
+	local xpMax = nivelConfig.RequerimientosXP[nivel]
+	if xpMax then
+		personaje:SetAttribute("XPMax", xpMax)
+	end
+
+	local humanoid = personaje:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local vidaMax = personaje:GetAttribute("VidaMax") or 100
+		if vidaMax > 0 then
+			local porcentajeVida = humanoid.Health / humanoid.MaxHealth
+			humanoid.MaxHealth = vidaMax
+			humanoid.Health = vidaMax * porcentajeVida
+		end
+	end
+
+	return true
+end
+
+-- Fallback de stats manuales
+function nivelHandler.CalcularStatsManualmente(personaje)
+	local baseFuerza = personaje:GetAttribute("BaseFuerza") or 0
+	local baseDefensa = personaje:GetAttribute("BaseDefensa") or 0
+	local baseVidaMax = personaje:GetAttribute("BaseVidaMax") or 0
+
+	personaje:SetAttribute("Fuerza", baseFuerza)
+	personaje:SetAttribute("Defensa", baseDefensa)
+	personaje:SetAttribute("VidaMax", baseVidaMax)
+end
+
+-- Forzar actualización
+function nivelHandler.ForzarActualizarStats(personaje)
+	local nivelActual = personaje:GetAttribute("Nivel") or 1
+	nivelHandler.ActualizarStats(personaje, nivelActual)
+end
+
+-- Inicializar stats base
+function nivelHandler.InicializarStatsBase(personaje, nivel)
+	local tipoHeroe = personaje:GetAttribute("NombreReal") or "Spartan"
+	local stats = statsHeroes[tipoHeroe] and statsHeroes[tipoHeroe][nivel or 1]
+
+	if stats then
+		local player = Players:GetPlayerFromCharacter(personaje)
+		for nombreStat, valor in stats do
+			personaje:SetAttribute("Base" .. nombreStat, valor)
+			if player then
+				player:SetAttribute("Base" .. nombreStat, valor)
+			end
+		end
+
+		local xpMax = nivelConfig.RequerimientosXP[(nivel or 1) + 1] or 100
+		personaje:SetAttribute("XPMax", xpMax)
+		if player then
+			player:SetAttribute("XPMax", xpMax)
+		end
+
+		nivelHandler.ForzarActualizarStats(personaje)
+	end
+end
+
+return nivelHandler
