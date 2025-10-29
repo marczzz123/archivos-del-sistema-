@@ -1,0 +1,210 @@
+local Players = game:GetService("Players")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+-- ✅ OBTENER SISTEMAS PARA INTEGRACIÓN
+local nivelHandler = require(ServerScriptService:WaitForChild("NivelHandler"))
+local SistemaDeltems = require(ServerScriptService:WaitForChild("SistemaDeltems"))
+
+-- Valores por defecto
+local NIVEL_INICIAL = 1
+local XP_INICIAL = 0
+
+-- 🔄 FUNCIÓN PARA SINCRONIZAR DATOS AL RESPAWN
+local function sincronizarAlRespawn(player)
+	local character = player.Character
+	if not character then 
+		print(string.format("[GuardarDatos] ❌ No hay personaje para sincronizar (%s)", player.Name))
+		return 
+	end
+
+	print(string.format("[GuardarDatos] 🔄 Iniciando sincronización al respawn para %s", player.Name))
+
+	-- ✅ SINCRONIZAR DESDE VALORES GUARDADOS HACIA ATRIBUTOS
+	local nivelGuardado = player:FindFirstChild("NivelGuardado")
+	local xpGuardado = player:FindFirstChild("ExperienciaGuardada")
+
+	if nivelGuardado then
+		player:SetAttribute("Nivel", nivelGuardado.Value)
+		character:SetAttribute("Nivel", nivelGuardado.Value)
+		print(string.format("[GuardarDatos] 🔄 Nivel sincronizado: %s -> %d", player.Name, nivelGuardado.Value))
+	else
+		-- Crear si no existe
+		nivelGuardado = Instance.new("IntValue")
+		nivelGuardado.Name = "NivelGuardado"
+		nivelGuardado.Value = NIVEL_INICIAL
+		nivelGuardado.Parent = player
+		player:SetAttribute("Nivel", NIVEL_INICIAL)
+		character:SetAttribute("Nivel", NIVEL_INICIAL)
+		print(string.format("[GuardarDatos] 🔄 Nivel inicializado: %s -> %d", player.Name, NIVEL_INICIAL))
+	end
+
+	if xpGuardado then
+		player:SetAttribute("Experiencia", xpGuardado.Value)
+		character:SetAttribute("Experiencia", xpGuardado.Value)
+		print(string.format("[GuardarDatos] 🔄 Experiencia sincronizada: %s -> %d", player.Name, xpGuardado.Value))
+	else
+		-- Crear si no existe
+		xpGuardado = Instance.new("IntValue")
+		xpGuardado.Name = "ExperienciaGuardada"
+		xpGuardado.Value = XP_INICIAL
+		xpGuardado.Parent = player
+		player:SetAttribute("Experiencia", XP_INICIAL)
+		character:SetAttribute("Experiencia", XP_INICIAL)
+		print(string.format("[GuardarDatos] 🔄 Experiencia inicializada: %s -> %d", player.Name, XP_INICIAL))
+	end
+
+	-- ✅ INICIALIZAR STATS BASE SI ES NECESARIO
+	local nivel = player:GetAttribute("Nivel") or NIVEL_INICIAL
+	if not player:GetAttribute("BaseFuerza") then
+		task.spawn(function()
+			task.wait(1.5) -- Esperar a que el personaje esté completamente listo
+			if character and character.Parent then
+	
+				nivelHandler.InicializarStatsBase(character, nivel)
+			end
+		end)
+	else
+		print(string.format("[GuardarDatos] ℹ️ Stats base ya inicializados para %s", player.Name))
+	end
+end
+
+-- 🔄 FUNCIÓN PARA GUARDAR DATOS AL MORIR
+local function guardarAlMorir(character)
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then return end
+
+	-- ✅ GUARDAR DESDE ATRIBUTOS HACIA VALORES GUARDADOS
+	local nivel = character:GetAttribute("Nivel") or NIVEL_INICIAL
+	local xp = character:GetAttribute("Experiencia") or XP_INICIAL
+
+	-- Crear o actualizar valores guardados
+	local nivelGuardado = player:FindFirstChild("NivelGuardado")
+	if not nivelGuardado then
+		nivelGuardado = Instance.new("IntValue")
+		nivelGuardado.Name = "NivelGuardado"
+		nivelGuardado.Parent = player
+	end
+	nivelGuardado.Value = nivel
+
+	local xpGuardado = player:FindFirstChild("ExperienciaGuardada")
+	if not xpGuardado then
+		xpGuardado = Instance.new("IntValue")
+		xpGuardado.Name = "ExperienciaGuardada"
+		xpGuardado.Parent = player
+	end
+	xpGuardado.Value = xp
+
+	print(string.format("[GuardarDatos] 💾 Datos guardados para %s: Nivel %d, XP %d", 
+		player.Name, nivel, xp))
+end
+
+Players.PlayerAdded:Connect(function(player)
+	-- ✅ CREAR VALORES TEMPORALES SOLO SI NO EXISTEN
+	local nivelGuardado = player:FindFirstChild("NivelGuardado")
+	if not nivelGuardado then
+		nivelGuardado = Instance.new("IntValue")
+		nivelGuardado.Name = "NivelGuardado"
+		nivelGuardado.Value = NIVEL_INICIAL
+		nivelGuardado.Parent = player
+		print(string.format("[GuardarDatos] 🆕 NivelGuardado creado para %s", player.Name))
+	end
+
+	local xpGuardado = player:FindFirstChild("ExperienciaGuardada")
+	if not xpGuardado then
+		xpGuardado = Instance.new("IntValue")
+		xpGuardado.Name = "ExperienciaGuardada"
+		xpGuardado.Value = XP_INICIAL
+		xpGuardado.Parent = player
+		print(string.format("[GuardarDatos] 🆕 ExperienciaGuardada creada para %s", player.Name))
+	end
+
+	-- ✅ SINCRONIZAR ATRIBUTOS PERSISTENTES
+	player:SetAttribute("Nivel", nivelGuardado.Value)
+	player:SetAttribute("Experiencia", xpGuardado.Value)
+	print(string.format("[GuardarDatos] 🔄 Atributos persistentes sincronizados para %s", player.Name))
+
+	-- 🔄 CONECTAR EVENTO DE RESPAWN
+	player.CharacterAdded:Connect(function(character)
+		-- 🛡️ Bandera para respawn
+		local flag = Instance.new("BoolValue")
+		flag.Name = "IsSpawning"
+		flag.Parent = character
+
+		task.delay(3, function()
+			if flag and flag.Parent then
+				flag:Destroy()
+				print("🛡️ Bandera IsSpawning removida (respawn): " .. player.Name)
+			end
+		end)
+
+		-- 🔄 Llamar a sincronización de stats
+		sincronizarAlRespawn(player)
+	end)
+
+	-- 🔄 CONECTAR EVENTO DE MUERTE
+	player.CharacterAdded:Connect(function(character)
+		local humanoid = character:WaitForChild("Humanoid")
+		humanoid.Died:Connect(function()
+			print(string.format("[GuardarDatos] ☠️ Humanoid.Died para %s", player.Name))
+			guardarAlMorir(character)
+		end)
+	end)
+
+	-- ✅ SINCRONIZAR SI YA TIENE PERSONAJE
+	if player.Character then
+		task.spawn(function()
+			task.wait(1)
+			print(string.format("[GuardarDatos] 🚩 Sincronizando para personaje ya existente de %s", player.Name))
+			sincronizarAlRespawn(player)
+		end)
+	end
+
+	print(string.format("[GuardarDatos] 👤 Jugador %s registrado", player.Name))
+end)
+
+-- ✅ MANEJAR JUGADORES EXISTENTES
+for _, player in ipairs(Players:GetPlayers()) do
+	-- Crear valores temporales solo si no existen
+	local nivelGuardado = player:FindFirstChild("NivelGuardado")
+	if not nivelGuardado then
+		nivelGuardado = Instance.new("IntValue")
+		nivelGuardado.Name = "NivelGuardado"
+		nivelGuardado.Value = NIVEL_INICIAL
+		nivelGuardado.Parent = player
+		print(string.format("[GuardarDatos] 🆕 NivelGuardado creado para %s (existente)", player.Name))
+	end
+
+	local xpGuardado = player:FindFirstChild("ExperienciaGuardada")
+	if not xpGuardado then
+		xpGuardado = Instance.new("IntValue")
+		xpGuardado.Name = "ExperienciaGuardada"
+		xpGuardado.Value = XP_INICIAL
+		xpGuardado.Parent = player
+		print(string.format("[GuardarDatos] 🆕 ExperienciaGuardada creada para %s (existente)", player.Name))
+	end
+
+	-- Sincronizar atributos persistentes
+	player:SetAttribute("Nivel", nivelGuardado.Value)
+	player:SetAttribute("Experiencia", xpGuardado.Value)
+	print(string.format("[GuardarDatos] 🔄 Atributos persistentes sincronizados para %s (existente)", player.Name))
+
+	-- Conectar eventos si tiene personaje
+	if player.Character then
+		task.spawn(function()
+			task.wait(1)
+			print(string.format("[GuardarDatos] 🚩 Sincronizando para personaje ya existente de %s (existente)", player.Name))
+			sincronizarAlRespawn(player)
+
+			local humanoid = player.Character:FindFirstChild("Humanoid")
+			if humanoid then
+				humanoid.Died:Connect(function()
+					print(string.format("[GuardarDatos] ☠️ Humanoid.Died para %s (existente)", player.Name))
+					guardarAlMorir(player.Character)
+				end)
+			end
+		end)
+	end
+end
+
+print("[GuardarDatosNivel] ✅ Sistema de guardado inicializado e integrado")
+
