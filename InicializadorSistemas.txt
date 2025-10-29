@@ -1,0 +1,11 @@
+-- InicializadorSistemas.lua (Colocar en ServerScriptService)
+local ServerScriptService = game:GetService("ServerScriptService")
+
+-- Cargar módulos
+local LeaderstatsManager = require(ServerScriptService:WaitForChild("Leaderstats"))
+local EstadisticasManager = require(ServerScriptService:WaitForChild("EstadisticasManager"))
+
+-- Conectar los módulos
+EstadisticasManager:SetLeaderstatsManager(LeaderstatsManager)
+
+print("✅ Sistemas conectados correctamente")
