@@ -1,0 +1,49 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local IniciarUIStatsRE = RemoteEvents:WaitForChild("IniciarUIStats")
+
+local player = Players.LocalPlayer
+local XPVisualController = require(player:WaitForChild("PlayerScripts"):WaitForChild("XPVisualController"))
+
+-- 🔁 Función mejorada para manejar respawn
+local function iniciarXPVisuales()
+	local personaje = player.Character or player.CharacterAdded:Wait()
+
+	-- Esperar a que el SISTEMA DEL SERVIDOR sincronice los atributos
+	local intentos = 0
+	local maxIntentos = 10
+
+	repeat
+		task.wait(0.5)
+		intentos += 1
+		print("⏳ Esperando sincronización de atributos... Intento", intentos)
+	until (personaje:GetAttribute("Nivel") ~= nil and 
+		personaje:GetAttribute("Experiencia") ~= nil and
+		personaje:GetAttribute("XPMax") ~= nil) or intentos >= maxIntentos
+
+	if intentos >= maxIntentos then
+		warn("❌ Timeout esperando atributos de XP")
+		-- Valores por defecto para evitar crash
+		personaje:SetAttribute("Nivel", 1)
+		personaje:SetAttribute("Experiencia", 0)
+		personaje:SetAttribute("XPMax", 100)
+	end
+
+	XPVisualController.IniciarVisuales(player, personaje)
+	print("✅ XP Visuales inicializados para personaje nuevo")
+end
+
+-- ▶️ Esperar el evento del servidor antes de inicializar la UI
+IniciarUIStatsRE.OnClientEvent:Wait()
+iniciarXPVisuales()
+
+-- 🔄 Reconectar cada vez que el personaje cambia
+player.CharacterAdded:Connect(function()
+	task.wait(1.5) -- Esperar a que el servidor sincronice
+	IniciarUIStatsRE.OnClientEvent:Wait()
+	iniciarXPVisuales()
+end)
+
+print("✅ LocalScriptXp inicializado")
+
