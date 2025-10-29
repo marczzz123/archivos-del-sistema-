@@ -1,0 +1,27 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local SpartanSkills = require(ReplicatedStorage.Habilidades.SpartanModule)
+local lanzarLanzaEvent = ReplicatedStorage:WaitForChild("LanzarLanza")
+
+lanzarLanzaEvent.OnServerEvent:Connect(function(player, targetPosition)
+	if not player or not player:IsA("Player") then return end
+	if typeof(targetPosition) ~= "Vector3" then return end
+
+	local character = player.Character
+	if not character then return end
+
+	local nombrePersonaje = character:FindFirstChild("NombrePersonaje")
+	if not nombrePersonaje or nombrePersonaje.Value ~= "Spartan" then return end
+
+	local skill = SpartanSkills["1"]
+	if skill and typeof(skill.Funcion) == "function" then
+		local success, err = pcall(function()
+			skill.Funcion(player, targetPosition)
+		end)
+
+		if not success then
+			warn("[SpartanSkillError]:", err)
+		end
+	end
+end)
