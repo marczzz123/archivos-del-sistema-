@@ -1,0 +1,29 @@
+local ItemsConfig = {
+	["Espada de Acero"] = {
+		Precio = 100,
+		Tipo = "equipable",
+		Atributos = {Fuerza = 10, Defensa = 0, VidaMax = 0},
+		Imagen = "rbxassetid://112719175507384"
+	},
+	["Armadura de Hierro"] = {
+		Precio = 150,
+		Tipo = "equipable",
+		Atributos = {Fuerza = 0, Defensa = 15, VidaMax = 50},
+		Imagen = "rbxassetid://129778748383506"
+	},
+	["Poción de Curación"] = {
+		Precio = 50,
+		Tipo = "usable",
+		Cura = 50,
+		Imagen = "rbxassetid://116368651209550"
+	},
+	["Farol"] = {
+		Precio = 80,
+		Tipo = "colocable",
+		Duracion = 30,
+		Imagen = "rbxassetid://115471017509491",
+		ModeloUsable = "Farol"
+	}
+}
+
+return ItemsConfig
