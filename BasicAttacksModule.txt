@@ -1,3 +1,4 @@
+--serverscriptservice
 local BasicAttacks = {}
 
 -- Cargar módulos
