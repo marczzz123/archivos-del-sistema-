@@ -1,0 +1,106 @@
+-- EstadisticasManager.lua
+local Players = game:GetService("Players")
+
+local EstadisticasManager = {}
+
+-- 📊 Estadísticas básicas por partida
+local estadisticasPartida = {}
+
+-- Estructura simple
+local ESTADISTICAS_BASE = {
+	Kills = 0,
+	Muertes = 0,
+	Asistencias = 0,
+	OroGanado = 0
+}
+
+-- Variable para almacenar la referencia al LeaderstatsManager
+local LeaderstatsManager = nil
+
+-- Función para establecer la referencia (se llamará después de que ambos módulos estén cargados)
+function EstadisticasManager:SetLeaderstatsManager(manager)
+	LeaderstatsManager = manager
+end
+
+-- 🎯 FUNCIONES BÁSICAS
+function EstadisticasManager:InicializarJugador(player)
+	estadisticasPartida[player] = table.clone(ESTADISTICAS_BASE)
+	if LeaderstatsManager then
+		LeaderstatsManager:ActualizarLeaderstats(player, estadisticasPartida[player])
+	end
+end
+
+function EstadisticasManager:RegistrarKill(player)
+	if not estadisticasPartida[player] then return end
+
+	estadisticasPartida[player].Kills += 1
+	if LeaderstatsManager then
+		LeaderstatsManager:ActualizarLeaderstats(player, estadisticasPartida[player])
+	end
+
+	print("🎯 Kill para: " .. player.Name .. " - Total: " .. estadisticasPartida[player].Kills)
+end
+
+function EstadisticasManager:RegistrarMuerte(player)
+	if not estadisticasPartida[player] then return end
+
+	estadisticasPartida[player].Muertes += 1
+	if LeaderstatsManager then
+		LeaderstatsManager:ActualizarLeaderstats(player, estadisticasPartida[player])
+	end
+
+	print("💀 Muerte para: " .. player.Name)
+end
+
+function EstadisticasManager:RegistrarAsistencia(player)
+	if not estadisticasPartida[player] then return end
+
+	estadisticasPartida[player].Asistencias += 1
+	if LeaderstatsManager then
+		LeaderstatsManager:ActualizarLeaderstats(player, estadisticasPartida[player])
+	end
+
+	print("🤝 Asistencia para: " .. player.Name)
+end
+
+function EstadisticasManager:RegistrarOroPartida(player, cantidad)
+	if not estadisticasPartida[player] then return end
+
+	estadisticasPartida[player].OroGanado += cantidad
+	if LeaderstatsManager then
+		LeaderstatsManager:ActualizarLeaderstats(player, estadisticasPartida[player])
+	end
+
+	print("💰 Oro en partida para " .. player.Name .. ": +" .. cantidad)
+end
+
+function EstadisticasManager:ObtenerEstadisticas(player)
+	return estadisticasPartida[player] or ESTADISTICAS_BASE
+end
+
+function EstadisticasManager:ReiniciarEstadisticas(player)
+	estadisticasPartida[player] = table.clone(ESTADISTICAS_BASE)
+	if LeaderstatsManager then
+		LeaderstatsManager:ActualizarLeaderstats(player, estadisticasPartida[player])
+	end
+end
+
+function EstadisticasManager:LimpiarJugador(player)
+	estadisticasPartida[player] = nil
+end
+
+-- Manejo de jugadores
+Players.PlayerAdded:Connect(function(player)
+	EstadisticasManager:InicializarJugador(player)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	EstadisticasManager:LimpiarJugador(player)
+end)
+
+-- Inicializar jugadores existentes
+for _, player in ipairs(Players:GetPlayers()) do
+	EstadisticasManager:InicializarJugador(player)
+end
+
+return EstadisticasManager
