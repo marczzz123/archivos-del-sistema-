@@ -1,0 +1,577 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+-- Cargar módulos con validación
+local VidaManager, EquipoManager, EstadoManager
+
+if RunService:IsServer() then
+	local success1, vm = pcall(function() return require(game.ServerScriptService:WaitForChild("VidaManager")) end)
+	local success2, em = pcall(function() return require(game.ReplicatedStorage:WaitForChild("EquipoManager")) end)
+	local success3, sm = pcall(function() return require(game.ServerScriptService:WaitForChild("EstadoManager")) end)
+
+	VidaManager = success1 and vm or nil
+	EquipoManager = success2 and em or nil
+	EstadoManager = success3 and sm or nil
+end
+
+local MireyaSkills = {}
+
+-- Función auxiliar para obtener el origen de habilidades (Mireya o aliado fusionado)
+local function obtenerOrigenHabilidad(character)
+	local aliadoFusionado = character:FindFirstChild("AliadoFusionado")
+	if aliadoFusionado and aliadoFusionado.Value and aliadoFusionado.Value.Parent then
+		local aliado = aliadoFusionado.Value
+		local hrpAliado = aliado:FindFirstChild("HumanoidRootPart")
+		if hrpAliado then
+			return hrpAliado
+		end
+	end
+	-- Si no está fusionado, usar el propio HRP de Mireya
+	return character:FindFirstChild("HumanoidRootPart")
+end
+
+-- Habilidad 1: Onda Vital (Modificada para usar origen de fusión)
+MireyaSkills["1"] = {
+	Nombre = "Onda Vital",
+	Descripcion = "Lanza un proyectil curativo que cura a los aliados y daña a los enemigos que atraviesa.",
+	Cooldown = 8,
+	Tipo = "Direccion",
+	Execute = function(character, direccion, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then
+			print("[Onda Vital] Error: No se pudo obtener el jugador")
+			return false
+		end
+
+		if not character or not character.Parent then
+			print("❌ Personaje no disponible")
+			return false
+		end
+
+		-- Obtener el origen correcto (Mireya o aliado fusionado)
+		local hrp = obtenerOrigenHabilidad(character)
+		if not hrp then
+			local maxWaitTime = 2
+			local startTime = time()
+			while not hrp and (time() - startTime) < maxWaitTime do
+				task.wait(0.1)
+				hrp = obtenerOrigenHabilidad(character)
+			end
+			if not hrp then
+				warn("❌ No se encontró HumanoidRootPart después de esperar")
+				return false
+			end
+		end
+
+		print("[MireyaSkills][Onda Vital] Activada por:", player.Name, "Nivel:", nivel)
+
+		-- Dirección del proyectil
+		local dir = direccion or hrp.CFrame.LookVector
+		local origen = hrp.Position + dir * 3
+
+		-- Evento para efectos visuales (SOLO para el proyectil)
+		local ondaVitalEvent = game.ReplicatedStorage:FindFirstChild("MireyaOndaVitalEvent")
+		if ondaVitalEvent then
+			ondaVitalEvent:FireAllClients(origen, dir, nivel)
+		else
+			warn("❌ No se encontró MireyaOndaVitalEvent")
+		end
+
+		-- Crear proyectil FÍSICO (invisible) solo en servidor
+		local estela = Instance.new("Part")
+		estela.Size = Vector3.new(2, 2, 2)
+		estela.Transparency = 1  -- Invisible
+		estela.CanCollide = false
+		estela.Anchored = false
+		estela.Position = origen
+		estela.Parent = workspace
+
+		-- 🔊 AGREGAR SONIDO A LA ESTELA FÍSICA
+		print("🔊 Agregando sonido a la estela física...")
+		local sonidoEstela = Instance.new("Sound")
+		sonidoEstela.SoundId = "rbxassetid://121876820271865"
+		sonidoEstela.Volume = 0.8
+		sonidoEstela.MaxDistance = 80
+		sonidoEstela.RollOffMinDistance = 10
+		sonidoEstela.RollOffMaxDistance = 80
+		sonidoEstela.Looped = true  -- Para que se repita mientras viaja
+		sonidoEstela.Parent = estela
+		sonidoEstela:Play()
+		print("🔊 Sonido de estela reproducido - ID: " .. sonidoEstela.SoundId)
+
+		-- Movimiento (velocidad aumenta con nivel)
+		local velocidad = 50 + nivel * 5
+		local bodyVelocity = Instance.new("BodyVelocity")
+		bodyVelocity.Velocity = dir * velocidad
+		bodyVelocity.MaxForce = Vector3.new(100000, 100000, 100000)
+		bodyVelocity.Parent = estela
+
+		local aliadosCurados = {}
+
+		-- Colisiones
+		local touchedConnection
+		touchedConnection = estela.Touched:Connect(function(hit)
+			if not estela or not estela.Parent then
+				if touchedConnection then touchedConnection:Disconnect() end
+				return
+			end
+
+			local modelo = hit:FindFirstAncestorOfClass("Model")
+			if not modelo then return end
+
+			local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+			if not humanoide or humanoide.Health <= 0 then return end
+
+			-- Verificar aliado o enemigo
+			if EquipoManager then
+				if not EquipoManager.SonEnemigos(character, modelo) then
+					-- ✅ Aliado → curar (más curación con nivel)
+					if not aliadosCurados[modelo] then
+						aliadosCurados[modelo] = true
+
+						local curacion = 25 + nivel * 5
+						local vidaAntes = humanoide.Health
+						humanoide.Health = math.min(humanoide.MaxHealth, humanoide.Health + curacion)
+						print("💚 Onda Vital curó a: " .. modelo.Name .. " " .. vidaAntes .. " → " .. humanoide.Health .. " HP (+" .. curacion .. ")")
+
+						-- Evento para efectos de curación
+						if ondaVitalEvent then
+							ondaVitalEvent:FireAllClients("Curacion", modelo, humanoide.Health, nivel)
+						end
+					end
+				else
+					-- ✅ Enemigo → dañar (más daño con nivel)
+					if not aliadosCurados[modelo] then
+						aliadosCurados[modelo] = true
+
+						local danio = 15 + nivel * 3
+						local ok, err = pcall(function()
+							if VidaManager then
+								VidaManager:AplicarDanio(character, modelo, danio)
+							else
+								humanoide:TakeDamage(danio)
+							end
+						end)
+						if ok then
+							print("💥 Onda Vital dañó a:", modelo.Name, "por", danio, "HP")
+						else
+							warn("[Onda Vital] Error al aplicar daño:", err)
+						end
+
+						-- Evento para efectos de daño
+						if ondaVitalEvent then
+							ondaVitalEvent:FireAllClients("Dano", modelo, humanoide.Health, nivel)
+						end
+					end
+				end
+			else
+				print("[Onda Vital] No hay EquipoManager, no se pudo verificar aliado/enemigo")
+			end
+
+			-- Colisión con terreno o parte anclada
+			if hit:IsA("Part") and (hit.Anchored or hit.Parent:IsA("Terrain")) then
+				-- 🔇 Detener sonido al colisionar
+				if sonidoEstela then
+					sonidoEstela:Stop()
+				end
+				if bodyVelocity then bodyVelocity:Destroy() end
+				if estela then estela:Destroy() end
+				if touchedConnection then touchedConnection:Disconnect() end
+			end
+		end)
+
+		-- Destrucción por tiempo/distancia (más duración con nivel)
+		local distanciaMaxima, tiempoInicio = 100 + nivel * 10, time()
+		local conexion
+		conexion = game:GetService("RunService").Heartbeat:Connect(function()
+			if not estela or not estela.Parent then
+				if conexion then conexion:Disconnect() end
+				return
+			end
+
+			if time() - tiempoInicio > (4 + nivel * 0.5) or (estela.Position - hrp.Position).Magnitude > distanciaMaxima then
+				-- 🔇 Detener sonido al destruir
+				if sonidoEstela then
+					sonidoEstela:Stop()
+				end
+				if conexion then conexion:Disconnect() end
+				if touchedConnection then touchedConnection:Disconnect() end
+				estela:Destroy()
+			end
+		end)
+
+		return true
+	end
+}
+
+-- Habilidad 2: Semilla de Renovación (Actualizada con niveles)
+-- Habilidad 2: Semilla de Renovación (Mejorada con efectos visuales y sonidos)
+MireyaSkills["2"] = {
+	Nombre = "Semilla de Renovación",
+	Descripcion = "Coloca una semilla mágica en un aliado que florece después de 2 segundos, curando o explotando en área si el aliado muere.",
+	Cooldown = 14,
+	Tipo = "Seleccion",
+	RequiereAliado = true,
+	Execute = function(character, target, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		print("[SemillaRenovacion] 🌱 EJECUTANDO - Iniciando Nivel:", nivel)
+
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then
+			print("[SemillaRenovacion] ❌ Error: No se pudo obtener el jugador")
+			return false
+		end
+
+		if not target or not target.Parent then
+			print("[SemillaRenovacion] ❌ Error: Objetivo nulo o sin parent")
+			return false
+		end
+
+		local objetivoHrp = target:FindFirstChild("HumanoidRootPart")
+		if not objetivoHrp then
+			print("[SemillaRenovacion] ❌ Error: Objetivo no tiene HRP")
+			return false
+		end
+
+		-- Verificar si es aliado
+		if EquipoManager and EquipoManager.SonEnemigos(character, target) then
+			print("[SemillaRenovacion] ❌ No se puede colocar semilla en enemigos")
+			return false
+		end
+
+		print("[SemillaRenovacion] ✅ Objetivo válido:", target.Name)
+
+		-- 🔊 SONIDO: Aplicación de semilla
+		local sonidoAplicacion = Instance.new("Sound")
+		sonidoAplicacion.SoundId = "rbxassetid://95101113086995" -- Sonido mágico suave
+		sonidoAplicacion.Volume = 0.6
+		sonidoAplicacion.Parent = objetivoHrp
+		sonidoAplicacion:Play()
+		game:GetService("Debris"):AddItem(sonidoAplicacion, 3)
+
+		-- Activar efecto visual en cliente
+		local semillaEvent = game.ReplicatedStorage:FindFirstChild("MireyaSemillaRenovacionEvent")
+		if semillaEvent then
+			print("[SemillaRenovacion] 📨 Enviando evento al cliente")
+			semillaEvent:FireAllClients(target, objetivoHrp.Position, "Aplicar", nivel)
+		end
+
+		-- Crear marcador de semilla
+		local semillaMarker = Instance.new("ObjectValue")
+		semillaMarker.Name = "SemillaRenovacion"
+		semillaMarker.Value = character
+		semillaMarker.Parent = target
+
+		-- Configuración según nivel
+		local configPorNivel = {
+			curacionBase = 60 + nivel * 10,
+			curacionArea = 30 + nivel * 5,
+			radioArea = 10 + nivel * 2,
+			duracion = 2 + nivel * 0.3  -- Más duración con nivel
+		}
+
+		print("[SemillaRenovacion] 📊 Configuración - Curación:", configPorNivel.curacionBase, "Área:", configPorNivel.curacionArea)
+
+		-- Esperar para que florezca
+		task.delay(configPorNivel.duracion, function()
+			if target and target.Parent and semillaMarker and semillaMarker.Parent then
+				print("[SemillaRenovacion] 🌸 Procesando florecimiento en:", target.Name)
+
+				local humanoideObjetivo = target:FindFirstChildOfClass("Humanoid")
+				if humanoideObjetivo and humanoideObjetivo.Health > 0 then
+					-- Curación principal
+					local vidaAntes = humanoideObjetivo.Health
+					humanoideObjetivo.Health = math.min(humanoideObjetivo.MaxHealth, humanoideObjetivo.Health + configPorNivel.curacionBase)
+
+					print("🌱 Semilla de Renovación floreció en: " .. target.Name .. " " .. vidaAntes .. " → " .. humanoideObjetivo.Health .. " HP (+" .. configPorNivel.curacionBase .. ")")
+
+					-- 🔊 SONIDO: Florecimiento
+					local sonidoFlorecimiento = Instance.new("Sound")
+					sonidoFlorecimiento.SoundId = "rbxassetid://93523325820244" -- Sonido de florecimiento
+					sonidoFlorecimiento.Volume = 0.8
+					sonidoFlorecimiento.Parent = objetivoHrp
+					sonidoFlorecimiento:Play()
+					game:GetService("Debris"):AddItem(sonidoFlorecimiento, 3)
+
+					-- Efecto visual de florecimiento
+					if semillaEvent then
+						semillaEvent:FireAllClients("Florecer", target, objetivoHrp.Position, nivel)
+					end
+				else
+					print("[SemillaRenovacion] 💀 Objetivo muerto, aplicando curación en área")
+
+					-- 🔊 SONIDO: Explosión de semilla
+					local sonidoExplosion = Instance.new("Sound")
+					sonidoExplosion.SoundId = "rbxassetid://121421139153134" -- Sonido de explosión mágica
+					sonidoExplosion.Volume = 1.0
+					sonidoExplosion.Parent = objetivoHrp
+					sonidoExplosion:Play()
+					game:GetService("Debris"):AddItem(sonidoExplosion, 3)
+
+					-- Curación en área
+					local curados = 0
+					for _, obj in ipairs(workspace:GetChildren()) do
+						if obj:IsA("Model") and obj ~= target then
+							local objHrp = obj:FindFirstChild("HumanoidRootPart")
+							if objHrp then
+								local distancia = (objHrp.Position - objetivoHrp.Position).Magnitude
+								if distancia <= configPorNivel.radioArea then
+									if not EquipoManager or not EquipoManager.SonEnemigos(character, obj) then
+										local humanoideObj = obj:FindFirstChildOfClass("Humanoid")
+										if humanoideObj and humanoideObj.Health > 0 then
+											local vidaAntes = humanoideObj.Health
+											humanoideObj.Health = math.min(humanoideObj.MaxHealth, humanoideObj.Health + configPorNivel.curacionArea)
+											print("💥 Semilla explotó curando a: " .. obj.Name .. " " .. vidaAntes .. " → " .. humanoideObj.Health .. " HP (+" .. configPorNivel.curacionArea .. ")")
+											curados = curados + 1
+										end
+									end
+								end
+							end
+						end
+					end
+
+					print("[SemillaRenovacion] 🌐 Curación en área aplicada a " .. curados .. " objetivos")
+
+					-- Efecto visual de explosión
+					if semillaEvent then
+						semillaEvent:FireAllClients("Explotar", target, objetivoHrp.Position, nivel)
+					end
+				end
+
+				-- Eliminar marcador
+				semillaMarker:Destroy()
+			else
+				print("[SemillaRenovacion] ❌ Error: Target o marcador no existen después del delay")
+			end
+		end)
+
+		return true
+	end
+}
+
+-- Habilidad 3: Lazos de la Fe (Actualizada con niveles)
+MireyaSkills["3"] = {
+	Name = "Lazos de la Fe",
+	Descripcion = "Crea un vínculo con an aliado, compartiendo curación y daño.",
+	Cooldown = 20,
+	Tipo = "Seleccion",
+	RequiereAliado = true,
+	Execute = function(character, target, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		print("[MireyaSkills][Lazos de la Fe] Activada por:", player.Name, "Nivel:", nivel)
+
+		-- Obtener el origen correcto
+		local hrp = obtenerOrigenHabilidad(character)
+		if not hrp or not target or target == character then return false end
+
+		-- Verificar si es aliado
+		if EquipoManager and EquipoManager.SonEnemigos(character, target) then
+			print("❌ No se puede crear lazo con enemigos")
+			return false
+		end
+
+		local objetivoHrp = target:FindFirstChild("HumanoidRootPart")
+		if not objetivoHrp then return false end
+
+		-- ✅ CORREGIDO: Pasar "Conectar" como primer parámetro
+		local lazosEvent = game.ReplicatedStorage:FindFirstChild("MireyaLazosFeEvent")
+		if lazosEvent then
+			lazosEvent:FireAllClients("Conectar", character, target, nivel)
+		end
+
+		-- Crear vínculo
+		local duracion = 8 + nivel * 1
+		local porcentajeTransferencia = 0.3 + (nivel * 0.05)
+
+		-- Marcadores para ambos personajes
+		local vinculoMireya = Instance.new("ObjectValue")
+		vinculoMireya.Name = "VinculoLazoFe"
+		vinculoMireya.Value = target
+		vinculoMireya.Parent = character
+
+		local vinculoObjetivo = Instance.new("ObjectValue")
+		vinculoObjetivo.Name = "VinculoLazoFe"
+		vinculoObjetivo.Value = character
+		vinculoObjetivo.Parent = target
+
+		-- Función para manejar la transferencia (tu código existente)
+		local function manejarTransferencia(personajeDanado, cantidad, esCuracion)
+			-- ... (mantén tu código existente aquí)
+		end
+
+		print("🔗 Lazo de Fe creado entre " .. character.Name .. " y " .. target.Name)
+
+		-- Eliminar vínculo después de la duración
+		task.delay(duracion, function()
+			if vinculoMireya and vinculoMireya.Parent then
+				vinculoMireya:Destroy()
+			end
+			if vinculoObjetivo and vinculoObjetivo.Parent then
+				vinculoObjetivo:Destroy()
+			end
+
+			-- ✅ CORREGIDO: Pasar "Desconectar" como primer parámetro
+			if lazosEvent then
+				lazosEvent:FireAllClients("Desconectar", character, target)
+			end
+
+			print("🔗 Lazo de Fe finalizado")
+		end)
+
+		return true
+	end
+}
+
+-- Habilidad 4: Fusión Sagrada (Ultimate) (Actualizada con niveles)
+MireyaSkills["4"] = {
+	Name = "Fusión Sagrada",
+	Descripcion = "Se fusiona con un aliado, protegiéndolo con un escudo y transfiriendo sus alas. La cámara se transfiere al aliado durante la duración.",
+	Cooldown = 80,
+	Tipo = "Seleccion",
+	RequiereAliado = true,
+	Execute = function(character, target, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		-- Obtener el jugador desde el character
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then
+			return false
+		end
+
+		print("[MireyaSkills][Fusión Sagrada] Activada por:", player.Name, "Nivel:", nivel)
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp or not target or target == character then return false end
+
+		-- Verificar si es aliado
+		if EquipoManager and EquipoManager.SonEnemigos(character, target) then
+			print("❌ No se puede fusionar con enemigos")
+			return false
+		end
+
+		local objetivoHrp = target:FindFirstChild("HumanoidRootPart")
+		if not objetivoHrp then return false end
+
+		-- Buscar el accesorio de alas en Mireya
+		local alasOriginales = character:FindFirstChild("ribbon wings")
+		if not alasOriginales then
+			print("❌ No se encontraron alas en Mireya")
+			return false
+		end
+
+		-- Activar efecto visual en cliente (incluyendo información de cámara)
+		local fusionEvent = game.ReplicatedStorage:FindFirstChild("MireyaFusionSagradaEvent")
+		if fusionEvent then
+			-- Enviamos un parámetro adicional para indicar que es para el jugador local
+			fusionEvent:FireAllClients("Crear", character, target, nivel, player.UserId)
+		end
+
+		-- Configurar fusión (más duración y escudo con nivel)
+		local duracion = 8 + nivel * 1
+		local escudoMaximo = 200 + nivel * 40
+
+		-- Crear escudo para el aliado
+		local escudo = Instance.new("IntValue")
+		escudo.Name = "EscudoFusionSagrada"
+		escudo.Value = escudoMaximo
+		escudo.Parent = target
+
+		-- Guardar referencia al aliado fusionado
+		local aliadoValue = Instance.new("ObjectValue")
+		aliadoValue.Name = "AliadoFusionado"
+		aliadoValue.Value = target
+		aliadoValue.Parent = character
+
+
+		-- Hacer una copia de las alas
+		local alasAliado = alasOriginales:Clone()
+
+		-- Buscar el Handle y el AccessoryWeld
+		local handle = alasAliado:FindFirstChild("Handle")
+		local accessoryWeld = alasAliado:FindFirstChild("AccessoryWeld")
+
+		if handle and accessoryWeld then
+			-- Ajustar el CFrame del AccessoryWeld para colocar las alas en la espalda
+			-- Nota: El C0 del AccessoryWeld es relativo a la parte base (HumanoidRootPart o Torso)
+			-- Puede que necesites experimentar con los valores para que se vea bien.
+			accessoryWeld.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, math.rad(180), 0)
+		end
+
+		alasAliado.Parent = target
+
+		-- Hacer a Mireya invisible e invulnerable usando EstadoManager
+		EstadoManager.AplicarEstado(character, "Invisible", duracion)
+		EstadoManager.AplicarEstado(character, "Invulnerable", duracion)
+		EstadoManager.AplicarEstado(character, "Inmovilizado", duracion)
+
+		character:SetAttribute("Fusionado", true) -- Marcar que está fusionado
+
+		-- Ocultar las alas originales de Mireya
+		alasOriginales.Parent = nil
+
+		-- Sistema de absorción de daño
+		local humanoideObjetivo = target:FindFirstChildOfClass("Humanoid")
+		if humanoideObjetivo then
+			local conexionDanio
+			conexionDanio = humanoideObjetivo.HealthChanged:Connect(function()
+				if escudo.Value > 0 then
+					local danio = humanoideObjetivo.MaxHealth - humanoideObjetivo.Health
+					if danio > 0 then
+						local absorcion = math.min(danio, escudo.Value)
+						escudo.Value = escudo.Value - absorcion
+						humanoideObjetivo.Health = humanoideObjetivo.Health + absorcion
+						print("🛡️ Escudo absorbió " .. absorcion .. " de daño. Escudo restante: " .. escudo.Value)
+
+						if escudo.Value <= 0 then
+							print("🛡️ Escudo agotado")
+							conexionDanio:Disconnect()
+						end
+					end
+				end
+			end)
+		end
+
+		print("✨ Fusión Sagrada activada con " .. target.Name)
+
+		-- Finalizar fusión después de la duración
+		task.delay(duracion, function()
+			-- Restaurar a Mireya
+			EstadoManager.RemoverEstado(character, "Invisible")
+			EstadoManager.RemoverEstado(character, "Invulnerable")
+			EstadoManager.RemoverEstado(character, "Inmovilizado")
+
+			character:SetAttribute("Fusionado", false)
+
+			-- Eliminar la referencia al aliado
+			local aliadoValue = character:FindFirstChild("AliadoFusionado")
+			if aliadoValue then
+				aliadoValue:Destroy()
+			end
+
+			-- Devolver las alas a Mireya
+			if alasAliado and alasAliado.Parent then
+				alasAliado:Destroy()
+			end
+			alasOriginales.Parent = character
+
+			-- Eliminar escudo
+			if escudo and escudo.Parent then
+				escudo:Destroy()
+			end
+
+			-- Desactivar efecto visual y restaurar cámara
+			if fusionEvent then
+				fusionEvent:FireAllClients("Finalizar", character, target, nivel, player.UserId)
+			end
+
+			print("✨ Fusión Sagrada finalizada")
+		end)
+
+		return true
+	end
+}
+
+return MireyaSkills
