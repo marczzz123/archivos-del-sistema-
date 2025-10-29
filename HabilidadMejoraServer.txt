@@ -1,0 +1,198 @@
+-- HabilidadMejoraServer.lua (colocar en ServerScriptService)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local MejorarHabilidadEvent = RemoteEvents:WaitForChild("MejorarHabilidad")
+local ActualizarHabilidadUIEvent = RemoteEvents:WaitForChild("ActualizarHabilidadUI")
+
+-- Módulos existentes
+local NivelHandler = require(ServerScriptService:WaitForChild("NivelHandler"))
+
+-- Configuración de niveles requeridos para desbloquear habilidades
+local NIVELES_REQUERIDOS = {
+	["1"] = 1,  -- Habilidad 1 disponible desde nivel 1
+	["2"] = 2,  -- Habilidad 2 disponible desde nivel 2
+	["3"] = 3,  -- Habilidad 3 disponible desde nivel 3
+	["4"] = 6   -- Habilidad 4 (Ultimate) disponible desde nivel 6
+}
+
+-- Niveles de personaje requeridos para mejorar cada habilidad
+local NIVELES_PARA_MEJORA = {
+	["1"] = {2, 4, 6, 8},   -- La habilidad 1 se mejora en los niveles 2, 4, 6, 8
+	["2"] = {3, 5, 7, 9},   -- La habilidad 2 se mejora en los niveles 3, 5, 7, 9
+	["3"] = {4, 6, 8, 10},  -- La habilidad 3 se mejora en los niveles 4, 6, 8, 10
+	["4"] = {7, 9, 11, 13}  -- La habilidad 4 se mejora en los niveles 7, 9, 11, 13
+}
+
+-- Almacenar niveles de habilidades por jugador
+local nivelesHabilidades = {}
+
+-- Inicializar habilidades para un jugador
+local function inicializarHabilidades(player)
+	if not nivelesHabilidades[player] then
+		nivelesHabilidades[player] = {
+			["1"] = 1,  -- Habilidad 1 siempre empieza en nivel 1
+			["2"] = 1,  -- Otras habilidades empiezan bloqueadas
+			["3"] = 1,
+			["4"] = 1
+		}
+
+		-- Sincronizar con el personaje
+		local character = player.Character
+		if character then
+			for habilidad, nivel in pairs(nivelesHabilidades[player]) do
+				character:SetAttribute("Habilidad" .. habilidad .. "Nivel", nivel)
+			end
+		end
+	end
+end
+
+-- En HabilidadMejoraServer.lua, modificar la función aplicarMejoraHabilidad
+local function aplicarMejoraHabilidad(player, teclaHabilidad, nivel)
+	local character = player.Character
+	if not character then return end
+
+	-- Obtener el nombre real del personaje
+	local nombrePersonaje = character:GetAttribute("NombreReal") or "Spartan"
+
+	-- Cargar el módulo de habilidades del personaje
+	local habilidadesModule = require(ReplicatedStorage.Habilidades:WaitForChild(nombrePersonaje .. "Module"))
+	local habilidad = habilidadesModule[teclaHabilidad]
+
+	if habilidad and habilidad.Cooldown then
+		-- Reducir cooldown en un 10% por nivel
+		local reduccion = 0.1 * (nivel - 1)
+		local nuevoCooldown = math.max(1, habilidad.Cooldown * (1 - reduccion))
+
+		-- Almacenar el cooldown mejorado en un atributo
+		character:SetAttribute("Habilidad" .. teclaHabilidad .. "Cooldown", nuevoCooldown)
+
+		print(string.format("[HabilidadMejora] %s mejoró %s a nivel %d (Cooldown: %d → %d)", 
+			player.Name, teclaHabilidad, nivel, habilidad.Cooldown, nuevoCooldown))
+	end
+end
+
+-- Verificar si una habilidad puede ser mejorada
+local function puedeMejorarHabilidad(player, teclaHabilidad)
+	local character = player.Character
+	if not character then return false, "Personaje no encontrado" end
+
+	local nivelPersonaje = character:GetAttribute("Nivel") or 1
+	local nivelActual = nivelesHabilidades[player][teclaHabilidad] or 0
+	local nivelRequerido = NIVELES_REQUERIDOS[teclaHabilidad]
+
+	-- Verificar si la habilidad está desbloqueada
+	if nivelActual == 0 and nivelPersonaje < nivelRequerido then
+		return false, "Nivel insuficiente. Requiere nivel " .. nivelRequerido
+	end
+
+	-- Verificar si ya está al máximo nivel
+	if nivelActual >= 5 then
+		return false, "Habilidad ya está al máximo nivel"
+	end
+
+	-- Verificar nivel requerido para la próxima mejora
+	local nivelesMejora = NIVELES_PARA_MEJORA[teclaHabilidad]
+	if not nivelesMejora or nivelPersonaje < nivelesMejora[nivelActual] then
+		return false, "Necesitas nivel " .. nivelesMejora[nivelActual] .. " para mejorar esta habilidad"
+	end
+
+	return true
+end
+
+-- Mejorar una habilidad (YA puede llamar a aplicarMejoraHabilidad)
+local function mejorarHabilidad(player, teclaHabilidad)
+	local puede, mensaje = puedeMejorarHabilidad(player, teclaHabilidad)
+	if not puede then
+		return false, mensaje
+	end
+
+	-- Mejorar la habilidad
+	local nuevoNivel = (nivelesHabilidades[player][teclaHabilidad] or 0) + 1
+	nivelesHabilidades[player][teclaHabilidad] = nuevoNivel
+
+	-- Actualizar atributos del personaje
+	local character = player.Character
+	if character then
+		character:SetAttribute("Habilidad" .. teclaHabilidad .. "Nivel", nuevoNivel)
+	end
+
+	-- Aplicar mejoras según el tipo de habilidad
+	aplicarMejoraHabilidad(player, teclaHabilidad, nuevoNivel)
+
+	-- Notificar al cliente
+	ActualizarHabilidadUIEvent:FireClient(player, teclaHabilidad, nuevoNivel)
+
+	return true, "Habilidad mejorada a nivel " .. nuevoNivel
+end
+
+-- Manejar evento de mejora de habilidad
+MejorarHabilidadEvent.OnServerEvent:Connect(function(player, teclaHabilidad)
+	if not teclaHabilidad or not tonumber(teclaHabilidad) then
+		return
+	end
+
+	local exito, mensaje = mejorarHabilidad(player, teclaHabilidad)
+
+	-- Enviar feedback al cliente
+	local FeedbackUsoRE = RemoteEvents:FindFirstChild("FeedbackUso")
+	if FeedbackUsoRE then
+		FeedbackUsoRE:FireClient(player, "MejoraHabilidad", exito, mensaje)
+	end
+end)
+
+-- Sincronizar habilidades cuando un jugador se une
+Players.PlayerAdded:Connect(function(player)
+	inicializarHabilidades(player)
+
+	player.CharacterAdded:Connect(function(character)
+		-- Esperar a que el personaje esté completamente cargado
+		task.wait(1)
+
+		-- Sincronizar niveles de habilidades
+		for tecla, nivel in pairs(nivelesHabilidades[player] or {}) do
+			character:SetAttribute("Habilidad" .. tecla .. "Nivel", nivel)
+		end
+
+		-- Configurar observadores para cambios de nivel
+		character:GetAttributeChangedSignal("Nivel"):Connect(function()
+			local nuevoNivel = character:GetAttribute("Nivel") or 1
+
+			-- Desbloquear habilidades según el nivel
+			for tecla, nivelRequerido in pairs(NIVELES_REQUERIDOS) do
+				if nuevoNivel >= nivelRequerido and (nivelesHabilidades[player][tecla] or 0) == 0 then
+					nivelesHabilidades[player][tecla] = 1
+					character:SetAttribute("Habilidad" .. tecla .. "Nivel", 1)
+					ActualizarHabilidadUIEvent:FireClient(player, tecla, 1)
+
+					print(string.format("[HabilidadMejora] %s desbloqueó la habilidad %s al alcanzar nivel %d", 
+						player.Name, tecla, nuevoNivel))
+				end
+			end
+
+			-- Mostrar botones de mejora para habilidades que pueden ser mejoradas
+			for tecla, nivelActual in pairs(nivelesHabilidades[player] or {}) do
+				if nivelActual > 0 and nivelActual < 5 then
+					local nivelesMejora = NIVELES_PARA_MEJORA[tecla]
+					if nivelesMejora and nuevoNivel >= nivelesMejora[nivelActual] then
+						ActualizarHabilidadUIEvent:FireClient(player, "MostrarMejora", tecla)
+					end
+				end
+			end
+		end)
+	end)
+end)
+
+-- Limpiar datos cuando un jugador abandona
+Players.PlayerRemoving:Connect(function(player)
+	nivelesHabilidades[player] = nil
+end)
+
+-- Inicializar jugadores existentes (si el script se recarga)
+for _, player in ipairs(Players:GetPlayers()) do
+	inicializarHabilidades(player)
+end
+
+print("✅ Sistema de mejora de habilidades cargado en servidor")
