@@ -1,0 +1,296 @@
+local EstadoManager = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local EstadoRemoteEvent = ReplicatedStorage:WaitForChild("EstadoRemoteEvent")
+
+local estadosPorPersonaje = {} -- [personaje] = { ["Estado"] = {tiempoFin = x, parametros = {}} }
+local transparenciasOriginales = {} -- Almacena las transparencias originales por personaje
+local velocidadesOriginales = {} -- Almacena las velocidades originales
+
+-- 🌀 Aplicar estado con duración y parámetros
+function EstadoManager.AplicarEstado(personaje, tipo, duracion, parametros)
+	if not personaje or not personaje:IsA("Model") then return end
+	estadosPorPersonaje[personaje] = estadosPorPersonaje[personaje] or {}
+
+	local tiempoFin = os.clock() + duracion
+	estadosPorPersonaje[personaje][tipo] = {tiempoFin = tiempoFin, parametros = parametros or {}}
+	personaje:SetAttribute(tipo, true)
+
+	-- 🆕 NUEVO ESTADO: IMPACTADO (para knockback de ataques básicos)
+	if tipo == "Impactado" then
+		local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+		if humanoide then
+			-- Guardar velocidad original
+			if not humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide:SetAttribute("VelocidadOriginal", humanoide.WalkSpeed)
+			end
+			-- Reducir velocidad durante el impacto
+			local factor = parametros and parametros.factor or 0.3
+			humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal") * factor
+		end
+
+		-- 🔔 Notificar al cliente para efectos visuales
+		local jugador = game.Players:GetPlayerFromCharacter(personaje)
+		if jugador then
+			EstadoRemoteEvent:FireClient(jugador, "ReproducirAnimacionEstado", "Impactado", duracion)
+		else
+			EstadoRemoteEvent:FireAllClients("ReproducirAnimacionEstado", personaje, "Impactado", duracion)
+		end
+		print("💥 Estado Impactado aplicado a: " .. personaje.Name)
+
+		-- Aplica lógica especial si es "Aturdido" (para habilidades)
+	elseif tipo == "Aturdido" then
+		local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+		if humanoide then
+			-- Guardar velocidad original
+			if not humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide:SetAttribute("VelocidadOriginal", humanoide.WalkSpeed)
+			end
+			humanoide.WalkSpeed = 0
+		end
+
+		-- Aplicar también silencio y bloqueo de ataque
+		personaje:SetAttribute("Silenciado", true)
+		personaje:SetAttribute("BloqueadoAtaque", true)
+
+		-- 🔔 Notificar al cliente para reproducir animación de aturdido
+		local jugador = game.Players:GetPlayerFromCharacter(personaje)
+		if jugador then
+			EstadoRemoteEvent:FireClient(jugador, "ReproducirAnimacionAturdido")
+		else
+			-- Para NPCs, enviar a todos los clientes
+			EstadoRemoteEvent:FireAllClients("ReproducirAnimacionAturdido", personaje)
+		end
+		print("🌀 Estado Aturdido aplicado a: " .. personaje.Name)
+
+	elseif tipo == "BloqueadoAtaque" then
+		-- 🆕 NUEVO ESTADO: Solo bloquea ataques, no movimiento
+		personaje:SetAttribute("BloqueadoAtaque", true)
+		print("🛡️ Estado BloqueadoAtaque aplicado a: " .. personaje.Name)
+
+	elseif tipo == "Invisible" then
+		-- Guardar transparencia original si no existe
+		if not transparenciasOriginales[personaje] then
+			transparenciasOriginales[personaje] = {}
+			for _, part in ipairs(personaje:GetDescendants()) do
+				if part:IsA("BasePart") or part:IsA("Decal") then
+					transparenciasOriginales[personaje][part] = part.Transparency
+				end
+			end
+
+			-- Aplicar transparencia
+			for _, part in ipairs(personaje:GetDescendants()) do
+				if part:IsA("BasePart") or part:IsA("Decal") then
+					part.Transparency = 1
+				end
+			end
+		end
+
+	elseif tipo == "Ralentizado" then
+		local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+		if humanoide then
+			-- Guardar velocidad original
+			if not humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide:SetAttribute("VelocidadOriginal", humanoide.WalkSpeed)
+			end
+			-- Reducir velocidad según el factor (por defecto 0.7)
+			local factor = parametros and parametros.factor or 0.7
+			humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal") * factor
+		end
+
+	elseif tipo == "VelocidadAumentada" then
+		local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+		if humanoide then
+			-- Guardar velocidad original
+			if not humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide:SetAttribute("VelocidadOriginal", humanoide.WalkSpeed)
+			end
+			-- Aumentar velocidad según el factor (por defecto 1.3)
+			local factor = parametros and parametros.factor or 1.3
+			humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal") * factor
+		end
+
+	elseif tipo == "Invulnerable" then
+		print("🛡️ Estado Invulnerable aplicado a: " .. personaje.Name)
+
+	elseif tipo == "Silenciado" then
+		print("🔇 Estado Silenciado aplicado a: " .. personaje.Name)
+		-- No necesita lógica visual especial en el servidor
+
+		-- NUEVOS ESTADOS
+	elseif tipo == "VisionBorrosa" then
+		print("🔍 Visión borrosa aplicada a: " .. personaje.Name)
+		personaje:SetAttribute("VisionReducida", true)
+
+	elseif tipo == "ControlesInvertidos" then
+		print("🔄 Controles invertidos aplicados a: " .. personaje.Name)
+		-- Esto se manejará en el cliente en los controles del jugador
+
+	elseif tipo == "Vulnerable" then
+		print("🎯 Vulnerabilidad aplicada a: " .. personaje.Name)
+		local factor = parametros and parametros.factorDano or 1.1
+		personaje:SetAttribute("FactorDanoRecibido", factor)
+
+	elseif tipo == "Inmovilizado" then
+		local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+		if humanoide then
+			humanoide:SetAttribute("VelocidadOriginal", humanoide.WalkSpeed)
+			humanoide.WalkSpeed = 0
+		end
+		print("🔒 Inmovilizado aplicado a: " .. personaje.Name)    
+	end
+
+	-- 🔔 Notificar al cliente sobre el estado aplicado
+	local jugador = game.Players:GetPlayerFromCharacter(personaje)
+	if jugador then
+		EstadoRemoteEvent:FireClient(jugador, "Aplicar", tipo, duracion)
+	else
+		-- Para NPCs, enviar a todos los clientes
+		EstadoRemoteEvent:FireAllClients("Aplicar", personaje, tipo, duracion)
+	end
+
+	-- Restaurar estado automáticamente
+	task.delay(duracion, function()
+		if personaje and estadosPorPersonaje[personaje] then
+			EstadoManager.RemoverEstado(personaje, tipo)
+		end
+	end)
+end
+
+-- ❌ Remover estado manualmente
+function EstadoManager.RemoverEstado(personaje, tipo)
+	if not personaje or not personaje:IsA("Model") then return end
+	if estadosPorPersonaje[personaje] and estadosPorPersonaje[personaje][tipo] then
+		estadosPorPersonaje[personaje][tipo] = nil
+		personaje:SetAttribute(tipo, false)
+
+		-- 🆕 NUEVO ESTADO: IMPACTADO - Restaurar velocidad
+		if tipo == "Impactado" then
+			local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+			if humanoide and humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal")
+				humanoide:SetAttribute("VelocidadOriginal", nil)
+			end
+
+			-- 🔔 Notificar al cliente para detener efectos
+			local jugador = game.Players:GetPlayerFromCharacter(personaje)
+			if jugador then
+				EstadoRemoteEvent:FireClient(jugador, "DetenerAnimacionEstado", "Impactado")
+			else
+				EstadoRemoteEvent:FireAllClients("DetenerAnimacionEstado", personaje, "Impactado")
+			end
+			print("💥 Estado Impactado removido de: " .. personaje.Name)
+
+			-- Lógica especial para restaurar al remover "Aturdido"
+		elseif tipo == "Aturdido" then
+			local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+			if humanoide then 
+				humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal") or 16 
+				humanoide:SetAttribute("VelocidadOriginal", nil)
+			end
+			-- Remover también el silencio y bloqueo de ataque
+			personaje:SetAttribute("Silenciado", false)
+			personaje:SetAttribute("BloqueadoAtaque", false)
+
+			-- 🔔 Notificar al cliente para detener animación de aturdido
+			local jugador = game.Players:GetPlayerFromCharacter(personaje)
+			if jugador then
+				EstadoRemoteEvent:FireClient(jugador, "DetenerAnimacionAturdido")
+			else
+				EstadoRemoteEvent:FireAllClients("DetenerAnimacionAturdido", personaje)
+			end
+			print("🌀 Estado Aturdido removido de: " .. personaje.Name)
+
+		elseif tipo == "BloqueadoAtaque" then
+			-- 🆕 NUEVO ESTADO: Remover bloqueo de ataques
+			personaje:SetAttribute("BloqueadoAtaque", false)
+			print("🛡️ Estado BloqueadoAtaque removido de: " .. personaje.Name)
+
+		elseif tipo == "Invisible" then
+			-- Restaurar transparencia original
+			if transparenciasOriginales[personaje] then
+				for part, transparency in pairs(transparenciasOriginales[personaje]) do
+					if part.Parent then -- Verificar que la parte aún existe
+						part.Transparency = transparency
+					end
+				end
+				transparenciasOriginales[personaje] = nil
+			end
+
+		elseif tipo == "Ralentizado" or tipo == "VelocidadAumentada" then
+			local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+			if humanoide and humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal")
+				humanoide:SetAttribute("VelocidadOriginal", nil)
+			end
+
+		elseif tipo == "Invulnerable" then
+			print("🛡️ Estado Invulnerable removido de: " .. personaje.Name)
+
+		elseif tipo == "Silenciado" then
+			print("🔇 Estado Silenciado removido de: " .. personaje.Name)
+
+			-- NUEVOS ESTADOS
+		elseif tipo == "VisionBorrosa" then
+			personaje:SetAttribute("VisionReducida", false)
+			print("🔍 Visión borrosa removida de: " .. personaje.Name)
+
+		elseif tipo == "ControlesInvertidos" then
+			print("🔄 Controles invertidos removidos de: " .. personaje.Name)
+			-- El cliente debe restaurar controles
+
+		elseif tipo == "Vulnerable" then
+			personaje:SetAttribute("FactorDanoRecibido", nil)
+			print("🎯 Vulnerabilidad removida de: " .. personaje.Name)
+
+		elseif tipo == "Inmovilizado" then
+			local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+			if humanoide and humanoide:GetAttribute("VelocidadOriginal") then
+				humanoide.WalkSpeed = humanoide:GetAttribute("VelocidadOriginal")
+				humanoide:SetAttribute("VelocidadOriginal", nil)
+			end
+			print("🔒 Inmovilizado removido de: " .. personaje.Name)
+		end
+
+		-- 🔔 Notificar al cliente sobre el estado removido
+		local jugador = game.Players:GetPlayerFromCharacter(personaje)
+		if jugador then
+			EstadoRemoteEvent:FireClient(jugador, "Remover", tipo)
+		else
+			EstadoRemoteEvent:FireAllClients("Remover", personaje, tipo)
+		end
+	end
+end
+
+-- 📡 Consultar si personaje tiene un estado activo
+function EstadoManager.TieneEstado(personaje, tipo)
+	if not personaje then return false end
+	local data = estadosPorPersonaje[personaje] and estadosPorPersonaje[personaje][tipo]
+	return data and os.clock() < data.tiempoFin
+end
+
+-- 📡 Obtener parámetros de un estado
+function EstadoManager.ObtenerParametrosEstado(personaje, tipo)
+	if not personaje then return nil end
+	local data = estadosPorPersonaje[personaje] and estadosPorPersonaje[personaje][tipo]
+	return data and data.parametros
+end
+
+-- 🚫 Quitar un estado negativo
+function EstadoManager.QuitarEstadoNegativo(personaje)
+	if not personaje or not estadosPorPersonaje[personaje] then return false end
+
+	local listaNegativos = { "Aturdido", "Ralentizado", "Silenciado", "VisionBorrosa", "ControlesInvertidos", "Vulnerable", "Inmovilizado", "BloqueadoAtaque", "Impactado" }
+
+	for _, estado in ipairs(listaNegativos) do
+		if EstadoManager.TieneEstado(personaje, estado) then
+			print("[EstadoManager] 🧹 Removiendo estado negativo:", estado, "de", personaje.Name)
+			EstadoManager.RemoverEstado(personaje, estado)
+			return true
+		end
+	end
+
+	return false -- No tenía estados negativos
+end
+
+return EstadoManager
