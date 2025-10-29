@@ -1,0 +1,215 @@
+local NeutralMinionSpawner = {}
+
+-- Servicios
+local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- 🔧 Módulos
+local MinionAI = require(ReplicatedStorage:WaitForChild("MinionAI"))
+local EquipoManager = require(ReplicatedStorage:WaitForChild("EquipoManager"))
+
+-- 🗺️ Configuración de spawn points neutrales
+local SPAWN_POINTS = {
+	{
+		name = "Jungla_Zona1_CampamentoPequeño",
+		position = Vector3.new(-35.629, 10.698, 372.11),
+		minionType = "JungleCreep1",
+		respawnTime = 30,
+		level = 1,
+		minionCount = 3,  -- 3 MINIONS POR SPAWN
+		spawnRadius = 8   -- RADIO DE DISPERSIÓN
+	}
+}
+
+-- 📦 Modelos de minions neutrales
+local NEUTRAL_MINIONS = {
+	JungleCreep1 = ServerStorage:WaitForChild("NeutralMinion1"),
+}
+
+local activeNeutralMinions = {}
+local initialized = false
+
+-- 🆕 FUNCIÓN PARA GENERAR POSICIONES DISTRIBUIDAS (CORREGIDA)
+local function generarPosicionesDistribuidas(posicionCentral, cantidad, radio)
+	local posiciones = {}
+
+	for i = 1, cantidad do
+		-- 🆕 CORRECCIÓN: Usar ángulos equidistantes
+		local angulo = (2 * math.pi / cantidad) * (i - 1)
+		local offsetX = math.cos(angulo) * radio
+		local offsetZ = math.sin(angulo) * radio
+
+		local posicion = Vector3.new(
+			posicionCentral.X + offsetX,
+			posicionCentral.Y,
+			posicionCentral.Z + offsetZ
+		)
+		table.insert(posiciones, posicion)
+	end
+
+	return posiciones
+end
+
+-- 🌱 Función para spawnear un minion neutral en posición específica
+function NeutralMinionSpawner.SpawnNeutralMinion(spawnConfig, posicionEspecifica, minionIndex)
+	if not spawnConfig then 
+		warn("❌ [NeutralMinionSpawner] spawnConfig es nil")
+		return 
+	end
+
+	local nombreUnico = spawnConfig.minionType .. "_" .. minionIndex
+	print("🔧 [NeutralMinionSpawner] Intentando spawnear minion: " .. nombreUnico .. " en " .. spawnConfig.name)
+
+	if not NEUTRAL_MINIONS[spawnConfig.minionType] then
+		warn("❌ [NeutralMinionSpawner] Modelo no encontrado: " .. spawnConfig.minionType)
+		return nil
+	end
+
+	local minionModel = NEUTRAL_MINIONS[spawnConfig.minionType]:Clone()
+	minionModel.Name = nombreUnico
+	print("✅ [NeutralMinionSpawner] Modelo clonado: " .. minionModel.Name)
+
+	-- 🆕 VERIFICAR Y CONFIGURAR PRIMARYPART
+	if not minionModel.PrimaryPart then
+		local humanoidRootPart = minionModel:FindFirstChild("HumanoidRootPart")
+		if humanoidRootPart then
+			minionModel.PrimaryPart = humanoidRootPart
+		else
+			-- Buscar cualquier BasePart
+			local anyPart = minionModel:FindFirstChildWhichIsA("BasePart")
+			if anyPart then
+				minionModel.PrimaryPart = anyPart
+			else
+				warn("❌ [NeutralMinionSpawner] No se pudo encontrar PrimaryPart para: " .. minionModel.Name)
+				minionModel:Destroy()
+				return nil
+			end
+		end
+	end
+
+	-- Configurar posición
+	local posicionFinal = posicionEspecifica or spawnConfig.position
+	minionModel:SetPrimaryPartCFrame(CFrame.new(posicionFinal))
+	minionModel.Parent = workspace
+
+	-- 🏷️ Configurar como equipo neutral
+	minionModel:SetAttribute("Equipo", "Neutral")
+	minionModel:SetAttribute("EsMinion", true)
+	minionModel:SetAttribute("EsNeutral", true)
+	minionModel:SetAttribute("SpawnIndex", minionIndex)
+
+	-- 💰 Configurar recompensas
+	local xpReward = Instance.new("IntValue")
+	xpReward.Name = "XPReward"
+	xpReward.Value = 50 * spawnConfig.level
+	xpReward.Parent = minionModel
+
+	local goldReward = Instance.new("NumberValue")
+	goldReward.Name = "GoldReward" 
+	goldReward.Value = 25 * spawnConfig.level
+	goldReward.Parent = minionModel
+
+	-- ⚔️ Configurar salud
+	local humanoid = minionModel:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local variacionSalud = math.random(-20, 20)
+		humanoid.MaxHealth = (150 * spawnConfig.level) + variacionSalud
+		humanoid.Health = humanoid.MaxHealth
+		print("❤️ [NeutralMinionSpawner] Salud configurada: " .. humanoid.MaxHealth .. " HP para " .. minionModel.Name)
+	else
+		warn("❌ [NeutralMinionSpawner] No se encontró Humanoid en " .. minionModel.Name)
+		minionModel:Destroy()
+		return nil
+	end
+
+	-- 🧠 Iniciar IA
+	local spawnPosicion = posicionEspecifica or spawnConfig.position
+	local success, err = pcall(function()
+		MinionAI.Start(minionModel, function(waypointIndex, waypointName)
+			if waypointName == "FINISHED" then
+				minionModel:SetPrimaryPartCFrame(CFrame.new(spawnPosicion))
+			end
+		end)
+	end)
+
+	if not success then
+		warn("❌ [NeutralMinionSpawner] Error al iniciar IA para " .. minionModel.Name .. ": " .. tostring(err))
+		minionModel:Destroy()
+		return nil
+	end
+
+	-- 💀 Configurar respawn al morir
+	humanoid.Died:Connect(function()
+		print("🪦 [NeutralMinionSpawner] Minion neutral muerto: " .. minionModel.Name)
+		task.wait(spawnConfig.respawnTime)
+
+		if minionModel and minionModel.Parent then
+			minionModel:Destroy()
+		end
+
+		-- Respawnear en la misma posición específica
+		task.spawn(function()
+			NeutralMinionSpawner.SpawnNeutralMinion(spawnConfig, spawnPosicion, minionIndex)
+		end)
+	end)
+
+	activeNeutralMinions[minionModel] = true
+	print("🌿 [NeutralMinionSpawner] MINION SPAWNEADO EXITOSAMENTE: " .. minionModel.Name)
+	return minionModel
+end
+
+-- 🎯 Inicializar todos los spawn points (CORREGIDO)
+function NeutralMinionSpawner.Initialize()
+	if initialized then
+		print("⚠️ [NeutralMinionSpawner] Sistema YA inicializado, omitiendo...")
+		return
+	end
+
+	print("🚀 [NeutralMinionSpawner] INICIANDO SISTEMA...")
+	print("📊 [NeutralMinionSpawner] Total spawn points: " .. #SPAWN_POINTS)
+
+	for i, spawnConfig in ipairs(SPAWN_POINTS) do
+		print("🎯 [NeutralMinionSpawner] Procesando spawn point " .. i .. ": " .. spawnConfig.name)
+
+		-- 🆕 CORRECCIÓN: Generar múltiples minions
+		local cantidadMinions = spawnConfig.minionCount or 1
+		local radioDispersion = spawnConfig.spawnRadius or 5
+
+		print("👥 [NeutralMinionSpawner] Generando " .. cantidadMinions .. " minions con radio: " .. radioDispersion)
+
+		if cantidadMinions > 1 then
+			-- 🆕 CORRECCIÓN: Generar posiciones y spawnear TODOS los minions
+			local posiciones = generarPosicionesDistribuidas(spawnConfig.position, cantidadMinions, radioDispersion)
+
+			print("📍 [NeutralMinionSpawner] Total de posiciones generadas: " .. #posiciones)
+
+			for j, posicion in ipairs(posiciones) do
+				print("📍 [NeutralMinionSpawner] Posición minion " .. j .. ": " .. tostring(posicion))
+
+				-- 🆕 CORRECCIÓN: Usar task.spawn para evitar bloqueos
+				task.spawn(function()
+					local success, err = pcall(function()
+						NeutralMinionSpawner.SpawnNeutralMinion(spawnConfig, posicion, j)
+					end)
+
+					if not success then
+						warn("❌ [NeutralMinionSpawner] Error al spawnean minion " .. j .. ": " .. tostring(err))
+					end
+				end)
+
+				-- Pequeño delay entre spawns
+				task.wait(0.2)
+			end
+		else
+			-- Comportamiento normal para 1 minion
+			NeutralMinionSpawner.SpawnNeutralMinion(spawnConfig, nil, 1)
+		end
+	end
+
+	initialized = true
+	print("✅ [NeutralMinionSpawner] SISTEMA INICIALIZADO - " .. #SPAWN_POINTS .. " campamentos")
+end
+
+print("📝 [NeutralMinionSpawner] Script cargado - Esperando inicialización")
+
+return NeutralMinionSpawner
