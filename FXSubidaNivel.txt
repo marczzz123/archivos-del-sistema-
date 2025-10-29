@@ -1,0 +1,28 @@
+-- LocalScript en StarterPlayerScripts llamado "FXSubidaNivel.lua"
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local FXSubidaNivelRE = RemoteEvents:WaitForChild("FXSubidaNivel")
+
+FXSubidaNivelRE.OnClientEvent:Connect(function()
+	-- Efectos de partículas
+	local character = game.Players.LocalPlayer.Character
+	if character then
+		local part = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
+		if part then
+			local fx = Instance.new("ParticleEmitter")
+			fx.Color = ColorSequence.new(Color3.new(1, 1, 0))
+			fx.Rate = 50
+			fx.Lifetime = NumberRange.new(0.7)
+			fx.Parent = part
+			game:GetService("Debris"):AddItem(fx, 1.5)
+		end
+
+		-- Sonido
+		local sound = Instance.new("Sound")
+		sound.SoundId = "rbxassetid://103179906368901"
+		sound.Volume = 0.5
+		sound.Parent = part or character
+		sound:Play()
+		game:GetService("Debris"):AddItem(sound, 3)
+	end
+end)
