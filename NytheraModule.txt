@@ -1,0 +1,396 @@
+-- NytheraModule.lua (ReplicatedStorage/Habilidades)
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+
+-- Cargar módulos con validación
+local VidaManager, EquipoManager, EstadoManager, CombatManager, NytheraCrimsonBanquetVisual
+
+if RunService:IsServer() then
+	local success1, vm = pcall(function() return require(game.ServerScriptService:WaitForChild("VidaManager")) end)
+	local success2, em = pcall(function() return require(game.ReplicatedStorage:WaitForChild("EquipoManager")) end)
+	local success3, sm = pcall(function() return require(game.ServerScriptService:WaitForChild("EstadoManager")) end)
+	local success4, cm = pcall(function() return require(game.ReplicatedStorage:WaitForChild("CombatManager")) end)
+
+	VidaManager = success1 and vm or nil
+	EquipoManager = success2 and em or nil
+	EstadoManager = success3 and sm or nil
+	CombatManager = success4 and cm or nil
+
+	NytheraCrimsonBanquetVisual = game.ReplicatedStorage:FindFirstChild("NytheraCrimsonBanquetVisual")
+end
+
+local NytheraSkills = {}
+
+NytheraSkills["1"] = {
+	Nombre = "Llama Abisal",
+	Descripcion = "Dispara una llama oscura que quema al enemigo.",
+	Cooldown = 5,
+	Execute = RunService:IsServer() and function(character, target)
+		print("[NytheraSkills][Llama Abisal] Activada por:", character and character.Name or "nil")
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		if not character or not hrp then return false end
+
+		local fireball = Instance.new("Part")
+		fireball.Size = Vector3.new(1,1,1)
+		fireball.Shape = Enum.PartType.Ball
+		fireball.BrickColor = BrickColor.new("Really black")
+		fireball.Material = Enum.Material.Neon
+		fireball.Position = hrp.Position + hrp.CFrame.LookVector * 2
+		fireball.Anchored = false
+		fireball.CanCollide = false
+		fireball.Parent = workspace
+
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = hrp.CFrame.LookVector * 80
+		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+		bv.Parent = fireball
+
+		fireball.Touched:Connect(function(hit)
+			if hit:IsDescendantOf(character) then return end
+
+			-- ✅ CORRECCIÓN: Usar solo un parámetro
+			local enemigo = CombatManager and CombatManager.IdentificarEnemigoDesdeParte(hit)
+			print("[NytheraSkills][Llama Abisal] Fireball touched:", hit.Name, "Enemigo encontrado:", enemigo and enemigo.Name or "nil")
+
+			if enemigo and CombatManager then
+				CombatManager.AplicarDanioSegura(character, enemigo, 30)
+				print("[NytheraSkills][Llama Abisal] Daño aplicado a:", enemigo.Name)
+
+				if enemigo:FindFirstChild("HumanoidRootPart") then
+					local fuego = Instance.new("ParticleEmitter")
+					fuego.Texture = "rbxasset://textures/particles/fire_main.dds"
+					fuego.Lifetime = NumberRange.new(0.5)
+					fuego.Rate = 100
+					fuego.Speed = NumberRange.new(2)
+					fuego.Parent = enemigo.HumanoidRootPart
+					Debris:AddItem(fuego, 1)
+				end
+				fireball:Destroy()
+			end
+		end)
+
+		Debris:AddItem(fireball, 3)
+		return true
+	end or nil
+}
+
+NytheraSkills["2"] = {
+	Nombre = "Sombra Reflejada",
+	Descripcion = "Crea un clon que distrae a los enemigos.",
+	Cooldown = 10,
+	Execute = RunService:IsServer() and function(character, target)
+		print("[NytheraSkills][Sombra Reflejada] Activada por:", character and character.Name or "nil")
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not humanoid or not hrp then return false end
+
+		-- 🚀 Impulso hacia adelante
+		local impulso = Instance.new("BodyVelocity")
+		impulso.Velocity = hrp.CFrame.LookVector * 70
+		impulso.MaxForce = Vector3.new(1e5, 0, 1e5)
+		impulso.Parent = hrp
+		Debris:AddItem(impulso, 0.2)
+
+		-- 🌀 Crear clon
+		local clon = character:Clone()
+		clon.Name = "SombraNythera"
+		clon:SetPrimaryPartCFrame(hrp.CFrame + Vector3.new(0, 0.1, 0))
+		clon.Parent = workspace
+
+		local clonHRP = clon:FindFirstChild("HumanoidRootPart")
+		local clonHumanoid = clon:FindFirstChildOfClass("Humanoid")
+
+		-- ❌ Eliminar scripts del clon
+		for _, obj in clon:GetDescendants() do
+			if obj:IsA("Script") or obj:IsA("LocalScript") then
+				obj:Destroy()
+			end
+		end
+
+		-- 👕 Restaurar apariencia
+		for _, item in character:GetChildren() do
+			if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("BodyColors") or item:IsA("ShirtGraphic") then
+				item:Clone().Parent = clon
+			end
+		end
+
+		-- 🎩 Clonar accesorios
+		for _, acc in character:GetChildren() do
+			if acc:IsA("Accessory") then
+				acc:Clone().Parent = clon
+			end
+		end
+
+		-- 🧍 Configurar clon
+		if clonHumanoid and clonHRP then
+			clonHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+			clonHumanoid.PlatformStand = false
+			clonHumanoid.AutoRotate = true
+			clonHumanoid.WalkSpeed = 16
+
+			-- Animación caminar
+			local animator = clonHumanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", clonHumanoid)
+			local walkAnim = Instance.new("Animation")
+			walkAnim.AnimationId = "rbxassetid://180426354"
+			local walkTrack = animator:LoadAnimation(walkAnim)
+			walkTrack.Looped = true
+			walkTrack:Play()
+
+			-- Dirección y movimiento
+			clonHRP.CFrame = CFrame.new(clonHRP.Position, clonHRP.Position + hrp.CFrame.LookVector)
+			local destino = clonHRP.Position + clonHRP.CFrame.LookVector * 20
+			clonHumanoid:MoveTo(destino)
+		end
+
+		-- 💨 Partículas en el clon
+		local efecto = Instance.new("ParticleEmitter")	
+		efecto.Texture = "rbxassetid://241594419"
+		efecto.Lifetime = NumberRange.new(0.4)
+		efecto.Rate = 50
+		efecto.Speed = NumberRange.new(0)
+		efecto.Size = NumberSequence.new(2)
+		efecto.Color = ColorSequence.new(Color3.fromRGB(90, 0, 150))
+		efecto.LightEmission = 1
+		efecto.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.1),
+			NumberSequenceKeypoint.new(1, 0.8)
+		})
+		if clonHRP then
+			efecto.Parent = clonHRP
+		end
+
+		-- 🕒 Destruir el clon después de 3 segundos
+		task.delay(3, function()
+			if clon and clon.Parent then
+				clon:Destroy()
+			end
+		end)
+
+		print("🌀 Sombra Reflejada activada")
+		return true
+	end or nil
+}
+
+NytheraSkills["3"] = {
+	Nombre = "Garras de Sangre",
+	Descripcion = "Usa sus garras para hacer más daño al enemigo.",
+	Cooldown = 12,
+	Execute = RunService:IsServer() and function(character, target)
+		print("[NytheraSkills][Garras de Sangre] Activada por:", character and character.Name or "nil")
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then return false end
+
+		local garrasModelo = game.ReplicatedStorage:FindFirstChild("Garras")
+		if not garrasModelo then
+			warn("❌ No se encontró el modelo 'Garras'")
+			return false
+		end
+
+		local rightClaw = garrasModelo:FindFirstChild("RightClaw")
+		local leftClaw = garrasModelo:FindFirstChild("LeftClaw")
+
+		if not rightClaw or not leftClaw then
+			warn("❌ Faltan una o ambas garras en el modelo")
+			return false
+		end
+
+		local rClone = rightClaw:Clone()
+		local lClone = leftClaw:Clone()
+
+		-- 🌟 Función para agregar aura roja en el Handle
+		local function agregarAuraCircular(accesorio)
+			local handle = accesorio:FindFirstChild("Handle")
+			if handle then
+				local att = Instance.new("Attachment")
+				att.Name = "AuraAttachment"
+				att.Parent = handle
+
+				local aura = Instance.new("ParticleEmitter")
+				aura.Texture = "rbxassetid://241594419"
+				aura.Rate = 20
+				aura.Lifetime = NumberRange.new(1)
+				aura.Speed = NumberRange.new(0)
+				aura.Rotation = NumberRange.new(0, 360)
+				aura.RotSpeed = NumberRange.new(-90, 90)
+				aura.Size = NumberSequence.new(2.5)
+				aura.Transparency = NumberSequence.new{
+					NumberSequenceKeypoint.new(0, 0.2),
+					NumberSequenceKeypoint.new(1, 0.5)
+				}
+				aura.Color = ColorSequence.new(Color3.fromRGB(128, 0, 32))
+				aura.LightEmission = 1
+				aura.ZOffset = 2
+				aura.Parent = att
+			end
+		end
+
+		-- 🖐️ Añadir al personaje con efectos
+		agregarAuraCircular(rClone)
+		agregarAuraCircular(lClone)
+		humanoid:AddAccessory(rClone)
+		humanoid:AddAccessory(lClone)
+
+		print("🧤 Garras equipadas correctamente")
+
+		-- 🕒 Remover después de 15 segundos
+		task.delay(15, function()
+			if rClone and rClone.Parent then rClone:Destroy() end
+			if lClone and lClone.Parent then lClone:Destroy() end
+		end)
+
+		-- 💢 Atacar objetivo cercano
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return true end
+
+		local objetivo = nil
+		local distancia = math.huge
+		for _, modelo in pairs(workspace:GetDescendants()) do
+			if modelo:IsA("Model") and modelo ~= character then
+				local h = modelo:FindFirstChildOfClass("Humanoid")
+				local ohrp = modelo:FindFirstChild("HumanoidRootPart")
+				if h and ohrp and h.Health > 0 then
+					local d = (ohrp.Position - hrp.Position).Magnitude
+					if d < 30 and d < distancia then
+						objetivo = modelo
+						distancia = d
+					end
+				end
+			end
+		end
+
+		if objetivo then
+			local humanoidObjetivo = objetivo:FindFirstChildOfClass("Humanoid")
+			local hrpObjetivo = objetivo:FindFirstChild("HumanoidRootPart")
+
+			if humanoidObjetivo and hrpObjetivo then
+				print("[NytheraSkills][Garras de Sangre] Objetivo encontrado:", objetivo.Name)
+				local golpes = 0
+				local maxGolpes = 5
+				local distanciaMax = 7
+
+				task.spawn(function()
+					while golpes < maxGolpes and humanoidObjetivo.Health > 0 and humanoid.Health > 0 do
+						-- 🔒 VALIDACIÓN EXTRA
+						if not hrp.Parent or not hrpObjetivo.Parent then break end
+
+						local d = (hrpObjetivo.Position - hrp.Position).Magnitude
+						if d <= distanciaMax then
+							local esEnemigo = not EquipoManager or EquipoManager.SonEnemigos(character, objetivo)
+							print("[NytheraSkills][Garras de Sangre] Intentando aplicar daño a:", objetivo.Name, "¿Es enemigo?", esEnemigo)
+
+							if esEnemigo and VidaManager then
+								-- ✅ CORRECCIÓN: Parámetros correctos
+								VidaManager:AplicarDanio(character, objetivo, 8)
+								print("[NytheraSkills][Garras de Sangre] 💥 Daño aplicado golpe", golpes + 1, "a", objetivo.Name)
+							end
+							golpes += 1
+						end
+						task.wait(1)
+					end
+				end)
+			end
+		else
+			print("[NytheraSkills][Garras de Sangre] No se encontró objetivo para atacar.")
+		end
+
+		return true
+	end or nil
+}
+
+NytheraSkills["4"] = {
+	Nombre = "Banquete Carmesí",
+	Descripcion = "Salta y desata una explosión que roba vida a todos los enemigos cercanos.",
+	Cooldown = 12,
+	Execute = RunService:IsServer() and function(character, target)
+		print("[NytheraSkills][Banquete Carmesí] Activada por:", character and character.Name or "nil")
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if not humanoid or not root then return false end
+
+		local landed = false
+
+		local function doImpact()
+			if landed then return end
+			landed = true
+
+			-- === 1. Daño y robo de vida (server only) ===
+			local impactoPos = root.Position
+			local radio = 80
+
+			for _, target in pairs(workspace:GetDescendants()) do
+				if target:IsA("Model") and target ~= character then
+					local hum = target:FindFirstChildOfClass("Humanoid")
+					local hrp = target:FindFirstChild("HumanoidRootPart")
+					if hum and hum.Health > 0 and hrp then
+						local dist = (hrp.Position - impactoPos).Magnitude
+						if dist <= radio and EquipoManager and EquipoManager.SonEnemigos(character, target) then
+							local damage = 40
+
+							-- ✅ CORRECCIÓN: Usar AplicarDanioConRoboVida en lugar de funciones inexistentes
+							if CombatManager and CombatManager.AplicarDanioConRoboVida then
+								CombatManager.AplicarDanioConRoboVida(character, target, damage)
+							else
+								warn("[Banquete Carmesí] No se encontró CombatManager.AplicarDanioConRoboVida")
+							end
+						end
+					end
+				end
+			end
+
+			-- === 2. Trigger client visual effects ===
+			if NytheraCrimsonBanquetVisual then
+				local player = game.Players:GetPlayerFromCharacter(character)
+				if player then
+					NytheraCrimsonBanquetVisual:FireClient(player, root.Position)
+				end
+			end
+		end
+
+		-- Impulso hacia arriba
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = Vector3.new(0, 70, 0)
+		bv.MaxForce = Vector3.new(0, 1e5, 0)
+		bv.P = 2000
+		bv.Parent = root
+		Debris:AddItem(bv, 0.3)
+		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+		-- Detección principal por StateChanged (Landed)
+		local stateConn
+		stateConn = humanoid.StateChanged:Connect(function(_, newState)
+			if newState == Enum.HumanoidStateType.Landed and not landed then
+				if stateConn then stateConn:Disconnect() end
+				doImpact()
+			end
+		end)
+
+		-- Backup por touched (evita fallos si el humanoid no cambia a Landed por alguna razón)
+		local touchConn
+		touchConn = root.Touched:Connect(function(hit)
+			if hit:IsDescendantOf(character) then return end
+			if not landed then
+				if stateConn then stateConn:Disconnect() end
+				if touchConn then touchConn:Disconnect() end
+				doImpact()
+			end
+		end)
+
+		-- Safety timeout: por si no se detecta aterrizaje
+		task.delay(1.5, function()
+			if not landed then
+				if stateConn then pcall(function() stateConn:Disconnect() end) end
+				if touchConn then pcall(function() touchConn:Disconnect() end) end
+				doImpact()
+			end
+		end)
+
+		return true
+	end or nil
+}
+
+return NytheraSkills
