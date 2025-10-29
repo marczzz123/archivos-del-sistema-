@@ -1,0 +1,145 @@
+--starterplayerscripts
+local XPVisualController = {}
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+-- Tabla para almacenar conexiones de atributos y limpiarlas
+local attributeConnections = {}
+
+-- 🌀 Actualiza visualmente la barra de experiencia
+function XPVisualController.ActualizarBarra(barraFill, xpActual, xpMax)
+	if xpMax == 0 then
+		xpMax = 1 -- Evitar división por cero
+	end
+
+	local progreso = math.clamp(xpActual / xpMax, 0, 1)
+
+	if barraFill:FindFirstChild("ActiveTween") then
+		local prevTween = barraFill.ActiveTween.Value
+		if prevTween and typeof(prevTween) == "RBXScriptConnection" then
+			prevTween:Disconnect()
+		elseif prevTween and typeof(prevTween) == "Tween" then
+			prevTween:Cancel()
+		end
+		barraFill.ActiveTween:Destroy()
+	end
+
+	local tween = TweenService:Create(barraFill, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+		Size = UDim2.new(progreso, 0, 1, 0)
+	})
+
+	local tweenMarker = Instance.new("ObjectValue")
+	tweenMarker.Name = "ActiveTween"
+	tweenMarker.Value = tween
+	tweenMarker.Parent = barraFill
+
+	tween.Completed:Connect(function()
+		if barraFill:FindFirstChild("ActiveTween") then
+			barraFill.ActiveTween:Destroy()
+		end
+	end)
+	tween:Play()
+end
+
+-- 🔢 Actualiza el número de nivel
+function XPVisualController.ActualizarNivel(labelNivel, nuevoNivel)
+	labelNivel.Text = "Nivel " .. tostring(nuevoNivel)
+end
+
+-- 🧩 Conecta atributos del personaje a la UI del jugador
+function XPVisualController.IniciarVisuales(jugador, personaje)
+	-- Limpiar conexiones previas del mismo jugador
+	local key = tostring(jugador.UserId)
+	if attributeConnections[key] then
+		for _, conn in pairs(attributeConnections[key]) do
+			if conn and typeof(conn) == "RBXScriptConnection" then
+				conn:Disconnect()
+			end
+		end
+	end
+
+	local gui = jugador:WaitForChild("PlayerGui")
+	local interfaz = gui:FindFirstChild("HabilidadesGui")
+	if not interfaz then return end
+
+	local fondoBarra = interfaz:FindFirstChild("FondoBarraXP")
+	if not fondoBarra then return end
+
+	local barraFill = fondoBarra:FindFirstChild("BarraXP")
+	if not barraFill then return end
+
+	local labelNivel = interfaz:FindFirstChild("Nivel")
+	if not labelNivel then return end
+
+	if fondoBarra then fondoBarra.Visible = true end
+	if barraFill then barraFill.Visible = true end
+	if labelNivel then labelNivel.Visible = true end
+
+	local statsFrame = interfaz:FindFirstChild("StatsFrame")
+	if statsFrame then
+		statsFrame.Visible = true
+		local textoFuerza = statsFrame:FindFirstChild("TextoFuerza")
+		local textoDefensa = statsFrame:FindFirstChild("TextoDefensa")
+
+		if textoFuerza and textoDefensa then
+			local function actualizarStats()
+				local fuerza = personaje:GetAttribute("Fuerza") or 0
+				local defensa = personaje:GetAttribute("Defensa") or 0
+				textoFuerza.Text = "Fuerza: " .. tostring(fuerza)
+				textoDefensa.Text = "Defensa: " .. tostring(defensa)
+			end
+
+			local connFuerza = personaje:GetAttributeChangedSignal("Fuerza"):Connect(actualizarStats)
+			local connDefensa = personaje:GetAttributeChangedSignal("Defensa"):Connect(actualizarStats)
+
+			attributeConnections[key] = attributeConnections[key] or {}
+			table.insert(attributeConnections[key], connFuerza)
+			table.insert(attributeConnections[key], connDefensa)
+
+			actualizarStats()
+		end
+	end
+
+	local function actualizarUI()
+		local xp = personaje:GetAttribute("Experiencia") or 0
+		local nivel = personaje:GetAttribute("Nivel") or 1
+		local xpMax = personaje:GetAttribute("XPMax") or 0
+
+		if xpMax == 0 then
+			xpMax = 50 * nivel -- Valor por defecto si falta XPMax
+		end
+
+		if barraFill then
+			XPVisualController.ActualizarBarra(barraFill, xp, xpMax)
+		end
+		if labelNivel then
+			XPVisualController.ActualizarNivel(labelNivel, nivel)
+		end
+	end
+
+	local connXP = personaje:GetAttributeChangedSignal("Experiencia"):Connect(actualizarUI)
+	local connNivel = personaje:GetAttributeChangedSignal("Nivel"):Connect(actualizarUI)
+	local connXPMax = personaje:GetAttributeChangedSignal("XPMax"):Connect(actualizarUI)
+
+	attributeConnections[key] = attributeConnections[key] or {}
+	table.insert(attributeConnections[key], connXP)
+	table.insert(attributeConnections[key], connNivel)
+	table.insert(attributeConnections[key], connXPMax)
+
+	actualizarUI()
+end
+
+-- 🧹 Limpiar conexiones cuando el personaje se destruye
+function XPVisualController.LimpiarVisuales(jugador)
+	local key = tostring(jugador.UserId)
+	if attributeConnections[key] then
+		for _, conn in pairs(attributeConnections[key]) do
+			if conn and typeof(conn) == "RBXScriptConnection" then
+				conn:Disconnect()
+			end
+		end
+		attributeConnections[key] = nil
+	end
+end
+
+return XPVisualController
