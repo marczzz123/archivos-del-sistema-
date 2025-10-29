@@ -1,0 +1,310 @@
+--
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- RemoteEvents
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local ComprarItemRE = RemoteEvents:WaitForChild("ComprarItem")
+local EquiparItemRE = RemoteEvents:WaitForChild("EquiparItem")
+local DesequiparItemRE = RemoteEvents:WaitForChild("DesequiparItem")
+local ActualizarInventarioRE = RemoteEvents:WaitForChild("ActualizarInventario")
+local FeedbackCompraRE = RemoteEvents:WaitForChild("FeedbackCompra")
+local UsarItemRE = RemoteEvents:FindFirstChild("UsarItem") or Instance.new("RemoteEvent")
+UsarItemRE.Name = "UsarItem"
+UsarItemRE.Parent = RemoteEvents
+
+-- Config
+local ItemsConfig = require(ReplicatedStorage.Modulos:WaitForChild("ItemsConfig"))
+
+-- GUI
+local gui = script.Parent
+local topBar = gui:WaitForChild("TopBar")
+local tabsFrame = gui:WaitForChild("TabsFrame")
+local contenedor = gui:WaitForChild("Contenedor")
+
+local botonTienda = topBar:WaitForChild("BotonTienda")
+local botonInventario = topBar:WaitForChild("BotonInventario")
+
+local listaTienda = tabsFrame:WaitForChild("ListaTienda")
+local listaInventario = tabsFrame:WaitForChild("ListaInventario")
+local vistaPrevia = contenedor:WaitForChild("VistaPrevia")
+local botonEquipar = contenedor:WaitForChild("BotonEquipar")
+local botonComprar = contenedor:WaitForChild("BotonComprar")
+local botonUsar = contenedor:WaitForChild("BotonUsar")
+local textoAtributos = contenedor:WaitForChild("TextoAtributos")
+
+----------------------------------------------------------------
+-- Estado
+----------------------------------------------------------------
+local pestanaActual = "Tienda"
+local itemSeleccionado = nil
+local botonSeleccionado = nil
+local inventarioActual = {}
+
+-- Colores
+local COLOR_ACTIVO = Color3.fromRGB(80, 80, 80)
+local COLOR_INACTIVO = Color3.fromRGB(150, 150, 150)
+local COLOR_BOTON_NORMAL = Color3.fromRGB(60, 60, 60)
+local COLOR_BOTON_TEXTO_NORMAL = Color3.fromRGB(255, 255, 255)
+local COLOR_BOTON_RESALTADO = Color3.fromRGB(100, 170, 255)
+local COLOR_BOTON_TEXTO_RESALTADO = Color3.fromRGB(0, 0, 0)
+
+----------------------------------------------------------------
+-- Utilidades UI
+----------------------------------------------------------------
+local function setColoresTabs()
+	botonTienda.BackgroundColor3 = (pestanaActual == "Tienda") and COLOR_ACTIVO or COLOR_INACTIVO
+	botonInventario.BackgroundColor3 = (pestanaActual == "Inventario") and COLOR_ACTIVO or COLOR_INACTIVO
+end
+
+local function mostrarPestana(nombre)
+	pestanaActual = nombre
+	listaTienda.Visible = (nombre == "Tienda")
+	listaInventario.Visible = (nombre == "Inventario")
+	setColoresTabs()
+	botonComprar.Visible = (nombre == "Tienda")
+	botonEquipar.Visible = (nombre == "Inventario")
+	botonUsar.Visible = false
+end
+
+local function resaltarSeleccion(boton)
+	if botonSeleccionado and botonSeleccionado.Parent then
+		botonSeleccionado.BackgroundColor3 = COLOR_BOTON_NORMAL
+		botonSeleccionado.TextColor3 = COLOR_BOTON_TEXTO_NORMAL
+	end
+
+	if boton and boton:IsA("TextButton") then
+		boton.BackgroundColor3 = COLOR_BOTON_RESALTADO
+		boton.TextColor3 = COLOR_BOTON_TEXTO_RESALTADO
+		botonSeleccionado = boton
+	end
+end
+
+local function mostrarDetalles(nombreItem)
+	local datos = ItemsConfig[nombreItem]
+	if not datos then return end
+
+	itemSeleccionado = nombreItem
+	local infoText = ""
+
+	if datos.Tipo == "equipable" then
+		infoText = string.format(
+			"Nombre: %s\nPrecio: %d\nFuerza: %d | Defensa: %d | Vida: %d",
+			nombreItem,
+			(datos.Precio or 0),
+			(datos.Atributos and datos.Atributos.Fuerza) or 0,
+			(datos.Atributos and datos.Atributos.Defensa) or 0,
+			(datos.Atributos and datos.Atributos.VidaMax) or 0
+		)
+	elseif datos.Tipo == "usable" then
+		infoText = string.format(
+			"Nombre: %s\nPrecio: %d\nTipo: Consumible\nEfecto: Recupera %d de vida",
+			nombreItem,
+			(datos.Precio or 0),
+			(datos.Cura or 0)
+		)
+	elseif datos.Tipo == "colocable" then
+		infoText = string.format(
+			"Nombre: %s\nPrecio: %d\nTipo: Colocable\nDuración: %d segundos",
+			nombreItem,
+			(datos.Precio or 0),
+			(datos.Duracion or 0)
+		)
+	end
+
+	textoAtributos.Text = infoText
+
+	if vistaPrevia then
+		vistaPrevia.Visible = true
+		vistaPrevia.Image = datos.Imagen or "rbxassetid://6023426912"
+	end
+
+	if pestanaActual == "Inventario" then
+		botonEquipar.Visible = (datos.Tipo == "equipable")
+		botonUsar.Visible = (datos.Tipo == "usable" or datos.Tipo == "colocable")
+
+		if datos.Tipo == "usable" then
+			botonUsar.Text = "Consumir"
+		elseif datos.Tipo == "colocable" then
+			botonUsar.Text = "Colocar"
+		end
+	else
+		botonEquipar.Visible = false
+		botonUsar.Visible = false
+	end
+end
+
+----------------------------------------------------------------
+-- Generación de listas
+----------------------------------------------------------------
+local function limpiarLista(sf)
+	for _, ch in ipairs(sf:GetChildren()) do
+		if ch:IsA("TextButton") or ch:IsA("Frame") then
+			ch:Destroy()
+		end
+	end
+end
+
+local function crearBotonItem(parentSf, texto, onClick)
+	local boton = Instance.new("TextButton")
+	boton.Name = "ItemButton"
+	boton.Size = UDim2.new(1, -6, 0, 36)
+	boton.Position = UDim2.new(0, 3, 0, 0)
+	boton.Text = texto
+	boton.BackgroundColor3 = COLOR_BOTON_NORMAL
+	boton.TextColor3 = COLOR_BOTON_TEXTO_NORMAL
+	boton.ZIndex = 6
+	boton.Parent = parentSf
+
+	boton.MouseButton1Click:Connect(function()
+		resaltarSeleccion(boton)
+		onClick()
+	end)
+
+	return boton
+end
+
+local function llenarListaTienda()
+	limpiarLista(listaTienda)
+
+	if not listaTienda:FindFirstChildOfClass("UIListLayout") then
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 4)
+		layout.SortOrder = Enum.SortOrder.Name
+		layout.Parent = listaTienda
+	end
+
+	for nombreItem, datos in pairs(ItemsConfig) do
+		crearBotonItem(
+			listaTienda,
+			("%s  -  💰 %d"):format(nombreItem, datos.Precio or 0),
+			function()
+				mostrarDetalles(nombreItem)
+			end
+		)
+	end
+end
+
+local function llenarListaInventario(inventarioTabla)
+	inventarioActual = inventarioTabla or {}
+	limpiarLista(listaInventario)
+
+	if not listaInventario:FindFirstChildOfClass("UIListLayout") then
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 4)
+		layout.SortOrder = Enum.SortOrder.Name
+		layout.Parent = listaInventario
+	end
+
+	local count = 0
+
+	if inventarioTabla and typeof(inventarioTabla) == "table" then
+		for nombreItem, data in pairs(inventarioTabla) do
+			if typeof(nombreItem) == "string" and ItemsConfig[nombreItem] then
+				count += 1
+				local estado = ""
+				local cantidad = ""
+
+				if ItemsConfig[nombreItem].Tipo == "equipable" then
+					estado = (type(data) == "table" and data.equipado) and "[EQUIPADO]" or "[—]"
+				elseif ItemsConfig[nombreItem].Tipo == "usable" or ItemsConfig[nombreItem].Tipo == "colocable" then
+					cantidad = string.format(" [x%d]", data.cantidad or 1)
+				end
+
+				crearBotonItem(
+					listaInventario,
+					("%s%s  %s"):format(nombreItem, cantidad, estado),
+					function()
+						mostrarDetalles(nombreItem)
+					end
+				)
+			end
+		end
+	end
+
+	if count == 0 then
+		local info = Instance.new("TextLabel")
+		info.Size = UDim2.new(1, -6, 0, 36)
+		info.Position = UDim2.new(0, 3, 0, 0)
+		info.BackgroundTransparency = 1
+		info.Text = "Inventario vacío"
+		info.ZIndex = 6
+		info.TextColor3 = Color3.new(1,1,1)
+		info.Parent = listaInventario
+	end
+end
+
+----------------------------------------------------------------
+-- Eventos de botones
+----------------------------------------------------------------
+botonComprar.MouseButton1Click:Connect(function()
+	if pestanaActual == "Tienda" and itemSeleccionado then
+		ComprarItemRE:FireServer(itemSeleccionado)
+	end
+end)
+
+botonEquipar.MouseButton1Click:Connect(function()
+	if pestanaActual == "Inventario" and itemSeleccionado then
+		EquiparItemRE:FireServer(itemSeleccionado)
+	end
+end)
+
+botonUsar.MouseButton1Click:Connect(function()
+	if pestanaActual == "Inventario" and itemSeleccionado then
+		local datosItem = ItemsConfig[itemSeleccionado]
+		if datosItem and (datosItem.Tipo == "usable" or datosItem.Tipo == "colocable") then
+			UsarItemRE:FireServer(itemSeleccionado)
+		end
+	end
+end)
+
+botonTienda.MouseButton1Click:Connect(function()
+	mostrarPestana("Tienda")
+end)
+
+botonInventario.MouseButton1Click:Connect(function()
+	mostrarPestana("Inventario")
+end)
+
+----------------------------------------------------------------
+-- Eventos del servidor
+----------------------------------------------------------------
+ActualizarInventarioRE.OnClientEvent:Connect(function(inventarioTabla)
+	llenarListaInventario(inventarioTabla)
+end)
+
+FeedbackCompraRE.OnClientEvent:Connect(function(nombreItem, exito, mensaje)
+	if exito then
+		itemSeleccionado = nil
+		if botonSeleccionado then
+			resaltarSeleccion(nil)
+		end
+	end
+end)
+
+local FeedbackUsoRE = RemoteEvents:FindFirstChild("FeedbackUso") or Instance.new("RemoteEvent")
+FeedbackUsoRE.Name = "FeedbackUso"
+FeedbackUsoRE.Parent = RemoteEvents
+
+FeedbackUsoRE.OnClientEvent:Connect(function(nombreItem, exito, mensaje)
+end)
+
+----------------------------------------------------------------
+-- Inicialización
+----------------------------------------------------------------
+mostrarPestana("Tienda")
+llenarListaTienda()
+
+local function toggleTienda()
+	gui.Visible = not gui.Visible
+end
+
+local guiHabilidades = player.PlayerGui:WaitForChild("HabilidadesGui")
+local botonTiendaPrincipal = guiHabilidades:FindFirstChild("BotonTiendaPrincipal")
+
+if botonTiendaPrincipal and botonTiendaPrincipal:IsA("TextButton") then
+	botonTiendaPrincipal.MouseButton1Click:Connect(toggleTienda)
+end
+
+gui.Visible = false
