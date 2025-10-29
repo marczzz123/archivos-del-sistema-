@@ -1,0 +1,223 @@
+-- ModuleScript: MinionAnimations
+local MinionAnimations = {}
+MinionAnimations.__index = MinionAnimations
+
+-- Animaciones por equipo (ACTUALIZADO CON NEUTRALES)
+local TEAM_ANIMATIONS = {
+	HijosDelVacio = {
+		Walk = "rbxassetid://507777826",
+		Attack = "rbxassetid://136839884671363"  -- Animación de ataque VÁLIDA de Roblox
+	},
+	TemplariosDeLaLuz = {
+		Walk = "rbxassetid://180426354", 
+		Attack = "rbxassetid://99053784216930"  -- Animación de ataque VÁLIDA de Roblox
+	},
+	-- 🆕 ANIMACIONES PARA MINIONS NEUTRALES
+	Neutral = {
+		Walk = "rbxassetid://616168032",  -- Animación de caminar para monstruos
+		Attack = "rbxassetid://616161997"  -- Animación de ataque para monstruos
+	}
+}
+
+-- 🆕 ALIAS PARA EQUIPOS (por si usan diferentes nombres)
+local EQUIPO_ALIAS = {
+	["1"] = "HijosDelVacio",
+	["2"] = "TemplariosDeLaLuz",
+	["3"] = "Neutral",
+	["HijosDelVacio"] = "HijosDelVacio",
+	["TemplariosDeLaLuz"] = "TemplariosDeLaLuz",
+	["Neutral"] = "Neutral",
+	["Equipo1"] = "HijosDelVacio",
+	["Equipo2"] = "TemplariosDeLaLuz",
+	["Equipo3"] = "Neutral"
+}
+
+function MinionAnimations.new(minion)
+	-- 🔥 VERIFICACIONES MÁS ROBUSTAS
+	if not minion then
+		warn("❌ MinionAnimations: Minion es nil")
+		return nil
+	end
+
+	if not minion.Parent then
+		warn("❌ MinionAnimations: Minion no tiene parent - " .. tostring(minion.Name))
+		return nil
+	end
+
+	-- Esperar a que el minion esté completamente inicializado
+	local humanoid = minion:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		-- Intentar esperar un poco
+		task.wait(0.5)
+		humanoid = minion:FindFirstChildOfClass("Humanoid")
+		if not humanoid then
+			warn("❌ MinionAnimations: No hay Humanoid en " .. minion.Name)
+			return nil
+		end
+	end
+
+	-- Obtener y normalizar equipo (MEJORADO)
+	local equipo = minion:GetAttribute("Equipo")
+	if not equipo then
+		-- Intentar obtener de otra manera
+		equipo = minion:GetAttribute("Team") or minion.Name:match("^(.-)_")
+		if not equipo then
+			warn("❌ MinionAnimations: Minion sin atributo 'Equipo': " .. minion.Name)
+			return nil
+		end
+	end
+
+	-- 🆕 USAR EL ALIAS PARA NORMALIZAR
+	local equipoNormalizado = EQUIPO_ALIAS[tostring(equipo)] or equipo
+
+	-- Normalizar tildes por si acaso
+	equipoNormalizado = equipoNormalizado:gsub("í", "i"):gsub("á", "a"):gsub("é", "e"):gsub("ó", "o"):gsub("ú", "u")
+
+	-- 🆕 VERIFICAR SI EL EQUIPO TIENE ANIMACIONES, SINO USAR NEUTRAL COMO FALLBACK
+	if not TEAM_ANIMATIONS[equipoNormalizado] then
+		warn("⚠️ MinionAnimations: Equipo '" .. equipoNormalizado .. "' no encontrado, usando animaciones Neutral")
+		equipoNormalizado = "Neutral"
+	end
+
+	-- Inicialización
+	local self = setmetatable({}, MinionAnimations)
+
+	self.minion = minion
+	self.humanoid = humanoid
+	self.equipo = equipoNormalizado
+	self.teamAnimations = TEAM_ANIMATIONS[equipoNormalizado]
+
+	-- Configurar animator
+	self.animator = humanoid:FindFirstChildOfClass("Animator")
+	if not self.animator then
+		self.animator = Instance.new("Animator")
+		self.animator.Parent = humanoid
+	end
+
+	self.tracks = {}
+	self.isAttacking = false
+
+	-- Cargar animaciones con manejo de errores
+	local loadSuccess, loadError = pcall(function()
+		self:loadAnimations()
+		self:setupMovementListener()
+	end)
+
+	if not loadSuccess then
+		warn("❌ MinionAnimations: Error cargando animaciones: " .. tostring(loadError))
+		return nil
+	end
+
+	print("✅ MinionAnimations creado para: " .. minion.Name .. " (Equipo: " .. equipoNormalizado .. ")")
+	return self
+end
+
+function MinionAnimations:loadAnimations()
+	for animName, animId in pairs(self.teamAnimations) do
+		local success, anim = pcall(function()
+			local anim = Instance.new("Animation")
+			anim.AnimationId = animId
+			anim.Name = self.equipo .. "_" .. animName .. "Anim"
+			anim.Parent = self.minion
+			return anim
+		end)
+
+		if success and anim then
+			local track = self.animator:LoadAnimation(anim)
+			track.Looped = (animName == "Walk")
+			self.tracks[animName] = track
+			print("   ✅ Animación cargada: " .. animName .. " - " .. animId)
+		else
+			warn("❌ Error creando animación " .. animName .. " con ID: " .. animId)
+
+			-- 🆕 FALLBACK: Si falla una animación, usar una por defecto
+			if animName == "Walk" then
+				self.tracks.Walk = self:createFallbackAnimation(animName)
+			elseif animName == "Attack" then
+				self.tracks.Attack = self:createFallbackAnimation(animName)
+			end
+		end
+	end
+end
+
+-- 🆕 FUNCIÓN PARA CREAR ANIMACIONES DE FALLBACK
+function MinionAnimations:createFallbackAnimation(animType)
+	local fallbackAnimations = {
+		Walk = "rbxassetid://616168032",  -- Caminar genérico
+		Attack = "rbxassetid://616161997"  -- Ataque genérico
+	}
+
+	local anim = Instance.new("Animation")
+	anim.AnimationId = fallbackAnimations[animType] or "rbxassetid://616168032"
+	anim.Name = self.equipo .. "_Fallback_" .. animType
+	anim.Parent = self.minion
+
+	local track = self.animator:LoadAnimation(anim)
+	track.Looped = (animType == "Walk")
+
+	print("   ⚠️ Usando animación fallback para: " .. animType)
+	return track
+end
+
+function MinionAnimations:setupMovementListener()
+	self.humanoid.Running:Connect(function(speed)
+		if self.isAttacking then return end
+
+		if speed > 0.1 then
+			self:playWalk()
+		else
+			self:stopWalk()
+		end
+	end)
+end
+
+function MinionAnimations:playWalk()
+	if not self.isAttacking and self.tracks.Walk and not self.tracks.Walk.IsPlaying then
+		pcall(function()
+			self.tracks.Walk:Play()
+		end)
+	end
+end
+
+function MinionAnimations:stopWalk()
+	if self.tracks.Walk and self.tracks.Walk.IsPlaying then
+		pcall(function()
+			self.tracks.Walk:Stop()
+		end)
+	end
+end
+
+function MinionAnimations:playAttack()
+	if self.isAttacking then return end
+
+	self.isAttacking = true
+	self:stopWalk()
+
+	if self.tracks.Attack then
+		pcall(function()
+			self.tracks.Attack:Play()
+			self.tracks.Attack.Stopped:Wait()
+		end)
+
+		self.isAttacking = false
+
+		if self.humanoid.MoveDirection.Magnitude > 0 then
+			self:playWalk()
+		end
+	else
+		self.isAttacking = false
+	end
+end
+
+function MinionAnimations:destroy()
+	for _, track in pairs(self.tracks) do
+		pcall(function()
+			if track.IsPlaying then
+				track:Stop()
+			end
+		end)
+	end
+	self.tracks = {}
+end
+
+return MinionAnimations
