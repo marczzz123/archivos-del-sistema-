@@ -1,0 +1,527 @@
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Cargar módulos con validación
+local VidaManager, EquipoManager, EstadoManager, CombatManager
+
+if RunService:IsServer() then
+	local success1, vm = pcall(function() return require(game.ServerScriptService:WaitForChild("VidaManager")) end)
+	local success2, em = pcall(function() return require(game.ReplicatedStorage:WaitForChild("EquipoManager")) end)
+	local success3, sm = pcall(function() return require(game.ServerScriptService:WaitForChild("EstadoManager")) end)
+	local success4, cm = pcall(function() return require(game.ReplicatedStorage:WaitForChild("CombatManager")) end)
+
+	VidaManager = success1 and vm or nil
+	EquipoManager = success2 and em or nil
+	EstadoManager = success3 and sm or nil
+	CombatManager = success4 and cm or nil
+end
+
+local SpartanSkills = {}
+
+-- Habilidad 1: Golpe de Lanza (Actualizada con niveles)
+SpartanSkills["1"] = {
+	Nombre = "Golpe de Lanza",
+	Descripcion = "Lanza su lanza hacia donde apunta. Si impacta a un enemigo y lo empuja contra un obstáculo, lo aturde. Más daño y velocidad con nivel.",
+	Cooldown = 6,
+	Tipo = "Direccion",
+	Execute = RunService:IsServer() and function(character, direccion, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		print("[Spartan] Golpe de Lanza ACTIVADO por", player.Name, "Nivel:", nivel)
+
+		-- Obtener el RemoteEvent para sonidos
+		local SpartanLanzaRemote = ReplicatedStorage:FindFirstChild("SpartanLanzaEvent")
+		if not SpartanLanzaRemote then
+			warn("No se encontró el RemoteEvent SpartanLanzaEvent")
+			return false
+		end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then print("[Spartan] No hay HumanoidRootPart") return false end
+
+		-- Sonido de lanzamiento
+		SpartanLanzaRemote:FireAllClients("Lanzamiento", hrp.Position, nivel)
+
+		local lanzaDecorativa = character:FindFirstChild("Lanza")
+		if lanzaDecorativa then
+			lanzaDecorativa.Parent = nil
+			task.delay(1.5, function()
+				if character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
+					lanzaDecorativa.Parent = character
+				end
+			end)
+		end
+
+		local lanzamodel = ReplicatedStorage:FindFirstChild("Lanza")
+		if not (lanzamodel and lanzamodel:IsA("Model") and lanzamodel.PrimaryPart) then
+			print("[Spartan] No se encontró modelo de lanza válido en ReplicatedStorage")
+			return false
+		end
+
+		local mano = character:FindFirstChild("RightHand") or hrp
+		local posicionInicial = mano.Position
+		if not posicionInicial then
+			print("[Spartan] No hay posicionInicial")
+			return false
+		end
+
+		-- Calcular dirección usando el parámetro direccion
+		local objetivoPosicion = posicionInicial + (direccion * 50) -- Convertir dirección a posición
+		local success, direccionLanzamiento = pcall(function()
+			return (objetivoPosicion - posicionInicial).Unit
+		end)
+		if not success then
+			print("[Spartan] Error calculando dirección de lanzamiento")
+			return false
+		end
+
+		local orientacion = CFrame.lookAt(posicionInicial, objetivoPosicion)
+		local offset = orientacion.LookVector * 3
+		local lanzamientoFinal = CFrame.new(posicionInicial + offset, objetivoPosicion)
+			* CFrame.Angles(math.rad(270), 0, 0)
+
+		local proyectil = lanzamodel:Clone()
+		proyectil:SetPrimaryPartCFrame(lanzamientoFinal)
+		proyectil.Parent = workspace
+
+		for _, p in proyectil:GetDescendants() do
+			if p:IsA("BasePart") then
+				p.Anchored = false
+				p.CanCollide = false
+			end
+		end
+
+		task.delay(0.2, function()
+			for _, p in proyectil:GetDescendants() do
+				if p:IsA("BasePart") then
+					p.CanCollide = true
+				end
+			end
+		end)
+
+		-- Velocidad aumenta con nivel
+		local velocidad = 160 + (nivel * 8)
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = direccionLanzamiento * velocidad
+		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+		bv.Parent = proyectil.PrimaryPart
+
+		local bg = Instance.new("BodyGyro")
+		bg.CFrame = proyectil.PrimaryPart.CFrame
+		bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+		bg.P = 3000
+		bg.Parent = proyectil.PrimaryPart
+
+		local touched = false
+		local touchedConn
+		touchedConn = proyectil.PrimaryPart.Touched:Connect(function(hit)
+			if hit:IsDescendantOf(character) then return end
+
+			local targetChar = hit:FindFirstAncestorOfClass("Model")
+			local targetHumanoid = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+
+			-- VERIFICAR SI EL OBJETIVO ES UN ENEMIGO USANDO EQUIPOMANAGER
+			if targetChar and targetHumanoid and EquipoManager and EquipoManager.SonEnemigos(character, targetChar) then
+				touched = true
+				print("[Spartan] Lanza impactó a", targetChar.Name)
+
+				-- Sonido de impacto
+				SpartanLanzaRemote:FireAllClients("Impacto", hit.Position, nivel)
+
+				-- Aplicar daño (más daño con nivel)
+				local dano = 25 + (nivel * 6)
+				if VidaManager then
+					VidaManager:AplicarDanio(character, targetChar, dano)
+				else
+					targetHumanoid:TakeDamage(dano)
+				end
+
+				-- Knockback (más fuerza con nivel)
+				local fuerzaKnockback = 40 + (nivel * 3)
+				local knockback = Instance.new("BodyVelocity")
+				knockback.Velocity = (targetChar:GetPivot().Position - hrp.Position).Unit * fuerzaKnockback
+				knockback.MaxForce = Vector3.new(100000, 0, 100000)
+				knockback.P = 1000
+				knockback.Name = "SpartanKnockback"
+				local targetHRP = targetChar:FindFirstChild("HumanoidRootPart")
+				if targetHRP then
+					knockback.Parent = targetHRP
+				end
+				print("[Spartan] Knockback aplicado a", targetChar.Name)
+
+				-- Lanza clavada con orientación
+				if targetHRP then
+					local posicionImpacto = targetHRP.Position
+					local direccionLanza = (posicionImpacto - hrp.Position).Unit
+
+					local lanzaClavada = proyectil:Clone()
+					lanzaClavada.Name = "LanzaClavada"
+					lanzaClavada:SetPrimaryPartCFrame(                    
+						CFrame.lookAt(posicionImpacto, posicionImpacto + direccionLanza)
+							* CFrame.Angles(math.rad(180), math.rad(90), math.rad(90))
+					)
+
+					lanzaClavada.Parent = targetChar
+
+					local weld = Instance.new("WeldConstraint")
+					weld.Part0 = targetHRP
+					weld.Part1 = lanzaClavada.PrimaryPart
+					weld.Parent = lanzaClavada.PrimaryPart
+
+					task.delay(1.2, function()
+						if lanzaClavada and lanzaClavada.Parent then
+							lanzaClavada:Destroy()
+						end
+					end)
+
+					-- Aturdir si impacta obstáculo (más duración con nivel)
+					if EstadoManager then
+						local overlapParams = OverlapParams.new()
+						overlapParams.FilterDescendantsInstances = {targetChar}
+						overlapParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+						-- Posición justo detrás del personaje empujado
+						local checkPosition = targetHRP.Position - targetHRP.CFrame.LookVector * 1.5
+						local nearbyParts = workspace:GetPartBoundsInRadius(checkPosition, 1.5, overlapParams)
+
+						print("[Spartan] Chequeando obstáculos detrás de", targetChar.Name, "partes encontradas:", #nearbyParts)
+						if #nearbyParts > 0 then
+							local duracionAturdimiento = 1 + (nivel * 0.3)
+							print("[Spartan] ¡Obstáculo detectado! Aturdiendo a", targetChar.Name, "por", duracionAturdimiento, "segundos")
+							EstadoManager.AplicarEstado(targetChar, "Aturdido", duracionAturdimiento)
+						else
+							print("[Spartan] No se detectó obstáculo, no se aplica aturdimiento a", targetChar.Name)
+						end
+					end
+				end
+
+				task.delay(0.3, function()
+					if knockback then knockback:Destroy() end
+				end)
+			end
+
+			touchedConn:Disconnect()
+			proyectil:Destroy()
+		end)
+
+		task.delay(6, function()
+			if proyectil and proyectil.Parent and not touched then
+				print("[Spartan] La lanza no impactó a ningún objetivo, se destruye el proyectil")
+				proyectil:Destroy()
+			end
+		end)
+
+		return true
+	end or nil
+}
+
+-- Habilidad 2: Furia de Esparta (Actualizada con niveles)
+SpartanSkills["2"] = {
+	Nombre = "Furia de Esparta",
+	Descripcion = "Se fortalece, aumenta su defensa y regenera salud. Más duración y regeneración con nivel.",
+	Cooldown = 7,
+	Tipo = "Automatica",
+	Execute = RunService:IsServer() and function(character, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		-- Obtener el RemoteEvent para sonidos
+		local SpartanFuriaRemote = ReplicatedStorage:FindFirstChild("SpartanFuriaEvent")
+		if not SpartanFuriaRemote then
+			warn("No se encontró el RemoteEvent SpartanFuriaEvent")
+			return false
+		end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then print("❌ No hay Humanoid") return false end
+
+		if character:GetAttribute("FuriaActiva") then
+			print("[Spartan] ⚠️ Furia ya está activa")
+			return false
+		end
+
+		print("[Spartan] 🟥 Activando Furia de Esparta - Nivel:", nivel)
+
+		-- Sonido de activación
+		SpartanFuriaRemote:FireAllClients("Activacion", character:GetPivot().Position, nivel)
+
+		-- 🟥 Marcar furia activa
+		character:SetAttribute("FuriaActiva", true)
+
+		-- 🛡️ AUMENTAR DEFENSA (más bonus con nivel)
+		local defensaBase = character:GetAttribute("Defensa") or 0
+		local bonusPorcentaje = 0.3 + (nivel * 0.05)  -- 30% + 5% por nivel
+		local bonusDefensa = defensaBase * bonusPorcentaje
+		character:SetAttribute("Defensa", defensaBase + bonusDefensa)
+		print("[Spartan] 🛡️ Defensa aumentada: " .. defensaBase .. " + " .. bonusDefensa .. " = " .. (defensaBase + bonusDefensa))
+
+		-- ❤️ Regenerar salud (más duración y regeneración con nivel)
+		local duration = 5 + (nivel * 0.5)
+		local regeneracionPorSegundo = 10 + (nivel * 3)
+		local regeneracionTotal = 0
+
+		-- Aplicar estado visual de furia
+		if EstadoManager then
+			EstadoManager.AplicarEstado(character, "FuriaEspartana", duration)
+		end
+
+		local startTime = time()
+		local connection
+		connection = game:GetService("RunService").Heartbeat:Connect(function()
+			local elapsed = time() - startTime
+			if elapsed >= duration then
+				connection:Disconnect()
+				return
+			end
+
+			if humanoid.Health > 0 and character:GetAttribute("FuriaActiva") then
+				humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + (regeneracionPorSegundo * elapsed))
+				regeneracionTotal = regeneracionTotal + (regeneracionPorSegundo * elapsed)
+			end
+		end)
+
+		-- 🔚 Finalizar efecto después de la duración
+		task.delay(duration, function()
+			if character:GetAttribute("FuriaActiva") then
+				-- Restaurar defensa original
+				local defensaActual = character:GetAttribute("Defensa") or 0
+				character:SetAttribute("Defensa", defensaActual - bonusDefensa)
+				character:SetAttribute("FuriaActiva", false)
+
+				if EstadoManager then
+					EstadoManager.RemoverEstado(character, "FuriaEspartana")
+				end
+
+				print("[Spartan] 🛡️ Defensa restaurada: " .. (defensaActual - bonusDefensa))
+				print("[Spartan] 🟥 Furia de Esparta finalizada. Vida regenerada: " .. math.floor(regeneracionTotal))
+			end
+		end)
+
+		return true
+	end or nil
+}
+
+-- Habilidad 3: Llamas del Olimpo (Actualizada con niveles)
+SpartanSkills["3"] = {
+	Nombre = "Llamas del Olimpo",
+	Descripcion = "Los ataques básicos aplican daño en área y queman enemigos. Más duración y daño con nivel.",
+	Cooldown = 12,
+	Tipo = "Automatica",
+	Execute = RunService:IsServer() and function(character, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		-- Obtener el RemoteEvent para efectos visuales
+		local SpartanLlamasRemote = ReplicatedStorage:FindFirstChild("SpartanLlamasEvent")
+		if not SpartanLlamasRemote then
+			warn("No se encontró el RemoteEvent SpartanLlamasEvent")
+			return false
+		end
+
+		print("🔥 [Spartan] Activando Llamas del Olimpo - Nivel:", nivel)
+
+		-- Estado temporal (lo leerá BasicAttacksModule)
+		local status = Instance.new("IntValue")  -- Cambiamos a IntValue para almacenar el nivel
+		status.Name = "LlamasDelOlimpoActivas"
+		status.Value = nivel  -- Guardar el nivel para que el ataque básico lo use
+		status.Parent = character
+
+		-- Enviar al cliente para activar efectos visuales y sonido
+		SpartanLlamasRemote:FireAllClients("Activacion", nivel)
+
+		-- Duración aumenta con nivel
+		local duracion = 3 + (nivel * 0.5)
+
+		-- Fin del estado después de la duración
+		task.delay(duracion, function()
+			if status and status.Parent then 
+				status:Destroy() 
+				-- Enviar al cliente para desactivar efectos
+				SpartanLlamasRemote:FireAllClients("Desactivacion")
+				print("🔥 [Spartan] Llamas del Olimpo finalizadas - Duración:", duracion)
+			end
+		end)
+
+		return true
+	end or nil
+}
+
+-- Habilidad 4: Coliseo (Ultimate - Actualizada con niveles)
+SpartanSkills["4"] = {
+	Nombre = "Coliseo",
+	Descripcion = "Crea un coliseo que emerge desde el suelo y atrapa al enemigo dentro del área. Más duración y radio con nivel.",
+	Cooldown = 25,
+	Tipo = "Automatica",
+	Execute = RunService:IsServer() and function(character, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return false end
+
+		-- Obtener el RemoteEvent para efectos de sonido
+		local SpartanColiseoRemote = ReplicatedStorage:FindFirstChild("SpartanColiseoEvent")
+		if not SpartanColiseoRemote then
+			warn("No se encontró el RemoteEvent SpartanColiseoEvent")
+			return false
+		end
+
+		local ServerStorage = game:GetService("ServerStorage")
+		local TweenService = game:GetService("TweenService")
+		local Debris = game:GetService("Debris")
+		local RunService = game:GetService("RunService")
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then
+			warn("❌ Jugador sin HumanoidRootPart.")
+			return false
+		end
+
+		local coliseoBase = ServerStorage:FindFirstChild("Coliseo")
+		if not coliseoBase then
+			warn("❌ Modelo 'Coliseo' no encontrado en ServerStorage.")
+			return false
+		end
+
+		print("🏛️ [Spartan] Activando Coliseo - Nivel:", nivel)
+
+		-- Sonido de invocación
+		SpartanColiseoRemote:FireAllClients("Invocacion", hrp.Position, nivel)
+
+		local nuevoColiseo = coliseoBase:Clone()
+		local invocarPart = nuevoColiseo:FindFirstChild("Invocar")
+		if not invocarPart then
+			warn("❌ Parte 'Invocar' no encontrada en el modelo Coliseo.")
+			return false
+		end
+		nuevoColiseo.PrimaryPart = invocarPart
+
+		local centro = hrp.Position
+		local profundidadInicial = 40
+		local ajusteFinalY = -4.5
+		local inicio = centro - Vector3.new(0, profundidadInicial, 0)
+		local posicionFinal = centro + Vector3.new(0, ajusteFinalY, 0)
+		local direccion = hrp.CFrame.LookVector
+
+		nuevoColiseo.Parent = workspace
+
+		local anguloZ = math.rad(-90)
+		local alineado = CFrame.new(inicio, inicio + direccion)
+		local rotacionInicial = alineado * CFrame.Angles(0, 0, anguloZ)
+		nuevoColiseo:PivotTo(rotacionInicial)
+
+		for _, part in ipairs(nuevoColiseo:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.CanCollide = false
+			end
+		end
+
+		local guia = Instance.new("Part")
+		guia.Anchored = true
+		guia.Transparency = 1
+		guia.CanCollide = false
+		guia.Size = Vector3.new(1, 1, 1)
+		guia.CFrame = CFrame.new(inicio)
+		guia.Parent = workspace
+		Debris:AddItem(guia, 2)
+
+		local tween = TweenService:Create(
+			guia,
+			TweenInfo.new(1, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
+			{ Position = posicionFinal }
+		)
+		tween:Play()
+
+		local conexion = RunService.Heartbeat:Connect(function()
+			nuevoColiseo:PivotTo(guia.CFrame * CFrame.Angles(0, 0, anguloZ))
+		end)
+
+		tween.Completed:Connect(function()
+			conexion:Disconnect()
+			for _, part in ipairs(nuevoColiseo:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = true
+				end
+			end
+			-- Sonido de coliseo activo (loop)
+			SpartanColiseoRemote:FireAllClients("Activo", centro, nivel)
+		end)
+
+		-- Atrapar enemigos dentro (radio y duración aumentan con nivel)
+		local radioColiseo = 20 + (nivel * 2)
+		local duracionTotal = 20 + (nivel * 3)
+
+		local bucle
+		task.delay(1, function()
+			local coliseoPartes = {}
+			for _, part in nuevoColiseo:GetDescendants() do
+				if part:IsA("BasePart") then
+					table.insert(coliseoPartes, part)
+				end
+			end
+
+			local tiempoActivo = 0
+			bucle = RunService.Heartbeat:Connect(function(dt)
+				tiempoActivo += dt
+
+				-- Aplicar daño periódico a enemigos dentro del coliseo (más daño con nivel)
+				if tiempoActivo % 1 < dt then  -- Cada segundo
+					for _, jugadorEnemigo in pairs(Players:GetPlayers()) do
+						local enemigoChar = jugadorEnemigo.Character
+						if enemigoChar and enemigoChar:FindFirstChild("HumanoidRootPart") then
+							local hrpEnemigo = enemigoChar.HumanoidRootPart
+							local distancia = (hrpEnemigo.Position - centro).Magnitude
+
+							if distancia <= radioColiseo then
+								-- Aplicar daño periódico
+								local danoPeriodico = 5 + nivel
+								if VidaManager then
+									VidaManager:AplicarDanio(character, enemigoChar, danoPeriodico)
+								end
+
+								-- Aplicar efecto visual de confinamiento
+								if EstadoManager then
+									EstadoManager.AplicarEstado(enemigoChar, "Confinado", 1.5)
+								end
+							end
+						end
+					end
+				end
+
+				-- Mantener enemigos dentro del coliseo
+				for _, jugadorEnemigo in pairs(Players:GetPlayers()) do
+					local enemigoChar = jugadorEnemigo.Character
+					if enemigoChar and enemigoChar:FindFirstChild("HumanoidRootPart") and 
+						EquipoManager and EquipoManager.SonEnemigos(character, enemigoChar) then
+						local hrpEnemigo = enemigoChar.HumanoidRootPart
+						local distancia = (hrpEnemigo.Position - centro).Magnitude
+
+						if distancia > radioColiseo then
+							-- Teletransportar enemigo de vuelta al centro del coliseo
+							local direccionCentro = (centro - hrpEnemigo.Position).Unit
+							local nuevaPosicion = centro + (direccionCentro * (radioColiseo - 3))
+							hrpEnemigo.CFrame = CFrame.new(nuevaPosicion + Vector3.new(0, 5, 0))
+							print("⚔️ Enemigo atrapado dentro del Coliseo:", jugadorEnemigo.Name)
+						end
+					end
+				end
+
+				if tiempoActivo >= duracionTotal then
+					bucle:Disconnect()
+					-- Sonido de finalización
+					SpartanColiseoRemote:FireAllClients("Finalizacion", centro, nivel)
+					print("🏛️ [Spartan] Coliseo finalizado - Duración:", duracionTotal)
+				end
+			end)
+		end)
+
+		Debris:AddItem(nuevoColiseo, duracionTotal + 2)
+		return true
+	end or nil
+}
+
+return SpartanSkills
