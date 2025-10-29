@@ -1,0 +1,428 @@
+--ReplicatedStorage/Habilidades(folder)/ BlacktorModule 
+-- BlacktorModule.lua (modificado para usar niveles de habilidad)
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+
+-- Cargar módulos con verificación de errores
+local VidaManager, EquipoManager, EstadoManager, CombatManager
+
+if RunService:IsServer() then
+	local success, err = pcall(function()
+		VidaManager = require(game.ServerScriptService:WaitForChild("VidaManager"))
+		EquipoManager = require(game.ReplicatedStorage:WaitForChild("EquipoManager"))
+		EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+		CombatManager = require(game.ReplicatedStorage:WaitForChild("CombatManager"))
+	end)
+	if not success then
+		warn("Error al cargar módulos en BlacktorModule: " .. tostring(err))
+	end
+end
+
+local BlacktorPrisonVisual = RunService:IsServer() and game.ReplicatedStorage:FindFirstChild("BlacktorPrisonVisual") or nil
+
+local BlacktorModule = {}
+
+-- 🔥 Habilidad 1 (Pasiva): Manto de Penumbra
+BlacktorModule["1"] = {
+	Nombre = "Manto de Penumbra",
+	Descripcion = "Te camuflas con la oscuridad, ganando sigilo y daño adicional en el primer ataque.",
+	Cooldown = 0,
+	Tipo = "Automatica",  -- Añadir este campo
+	Funcion = RunService:IsServer() and function(character, nivelHabilidad)
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return end
+
+		print("[BlacktorModule][Manto de Penumbra] Activado para:", player.Name, "Nivel:", nivelHabilidad)
+
+		-- Activar estado de sigilo e invisibilidad
+		character:SetAttribute("SigiloActivo", true)
+		if EstadoManager then
+			-- Duración aumenta con el nivel (20% más por nivel)
+			local duracionBase = 400
+			local duracion = duracionBase * (1 + 0.2 * (nivelHabilidad - 1))
+			EstadoManager.AplicarEstado(character, "Invisible", duracion)
+		end
+
+		-- Efecto visual de partículas de oscuridad
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			local particulas = Instance.new("ParticleEmitter")
+			particulas.Texture = "rbxassetid://241594419"
+			particulas.Lifetime = NumberRange.new(0.8)
+			particulas.Rate = 30
+			particulas.Speed = NumberRange.new(0.5)
+			particulas.Size = NumberSequence.new(1.5)
+			particulas.Color = ColorSequence.new(Color3.fromRGB(20, 20, 40))
+			particulas.LightEmission = 0.3
+			particulas.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.8),
+				NumberSequenceKeypoint.new(1, 1)
+			})
+			particulas.Parent = hrp
+
+			Debris:AddItem(particulas, 5)
+		end
+
+		print("🧥 Manto de Penumbra activado - Sigilo mejorado e Invisibilidad")
+	end or nil
+}
+
+BlacktorModule["2"] = {
+	Nombre = "Lanza Sombría",
+	Descripcion = "Lanza un proyectil de oscuridad que marca al enemigo para tu siguiente habilidad.",
+	Cooldown = 12,
+	Tipo = "Direccion",
+	Funcion = RunService:IsServer() and function(character, direccion, nivelHabilidad)
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player then return end
+
+		print("[BlacktorModule][Lanza Sombría] Activada por:", player.Name, "Nivel:", nivelHabilidad, "Dirección:", direccion)
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		-- Obtener el RemoteEvent
+		local LanzaSombriaRemote = game.ReplicatedStorage:FindFirstChild("LanzaSombriaEvent")
+		if not LanzaSombriaRemote then
+			warn("No se encontró el RemoteEvent LanzaSombriaEvent")
+			return
+		end
+
+		-- Escalar el daño según el nivel (20% más por nivel)
+		local fuerza = character:GetAttribute("Fuerza") or 0
+		local danioBase = math.floor(fuerza * (1.8 + 0.2 * (nivelHabilidad - 1)))
+
+		-- Enviar al cliente para crear efectos visuales Y sonido de lanzamiento
+		LanzaSombriaRemote:FireClient(player, hrp.Position, direccion, "Lanzamiento")
+
+		-- Crear proyectil de colisión (invisible)
+		local proyectil = Instance.new("Part")
+		proyectil.Name = "ProyectilLanzaSombria"
+		proyectil.Size = Vector3.new(1.5, 1.5, 3)
+		proyectil.Shape = Enum.PartType.Cylinder
+		proyectil.Transparency = 1  -- Completamente invisible
+		proyectil.Position = hrp.Position + direccion * 5  -- Aumentada a 5 unidades de distancia
+		proyectil.Orientation = Vector3.new(0, 0, 90)
+		proyectil.Anchored = false
+		proyectil.CanCollide = false
+		proyectil.CanTouch = true
+		proyectil.Parent = workspace
+
+		-- Añadir etiqueta para identificar este proyectil
+		proyectil:SetAttribute("EsProyectil", true)
+		proyectil:SetAttribute("Propietario", player.UserId)
+
+		-- Usar AssemblyLinearVelocity para movimiento más confiable
+		proyectil:SetNetworkOwner(player)  -- Dar ownership al jugador para mejor rendimiento
+
+		-- Propulsión (velocidad aumenta con el nivel)
+		local velocidadBase = 100
+		local velocidad = velocidadBase * (1 + 0.1 * (nivelHabilidad - 1))
+
+		-- Aplicar velocidad usando AssemblyLinearVelocity (más confiable que BodyVelocity)
+		proyectil.AssemblyLinearVelocity = direccion * velocidad
+
+		-- Detección de impacto
+		local conexion
+		local yaImpacto = false
+		conexion = proyectil.Touched:Connect(function(hit)
+			if yaImpacto then return end
+
+			-- Ignorar colisiones con el terreno y partes no deseadas
+			if hit:IsA("Part") and (hit.Name == "BasePlate" or hit.Name == "Terrain" or hit.Parent == workspace) then
+				return
+			end
+
+			-- Ignorar colisiones con el propio personaje y sus partes
+			if hit:IsDescendantOf(character) then
+				return
+			end
+
+			-- Buscar el modelo padre de la parte impactada
+			local modelo = hit:FindFirstAncestorOfClass("Model")
+			if not modelo then
+				return
+			end
+
+			-- Verificar si el modelo es un enemigo
+			local esEnemigo = false
+			if EquipoManager then
+				esEnemigo = EquipoManager.SonEnemigos(character, modelo)
+			else
+				-- Fallback: si no hay EquipoManager, asumir que todos los modelos con Humanoid son enemigos excepto el propio personaje
+				esEnemigo = modelo ~= character and modelo:FindFirstChildOfClass("Humanoid")
+			end
+
+			if not esEnemigo then
+				return
+			end
+
+			yaImpacto = true
+
+			-- Enviar sonido de impacto al cliente
+			LanzaSombriaRemote:FireAllClients(proyectil.Position, Vector3.new(), "Impacto")
+
+			-- Aplicar daño usando CombatManager para obtener experiencia y validaciones
+			if CombatManager then
+				CombatManager.AplicarDanioSegura(character, modelo, danioBase)
+			else
+				warn("CombatManager no está disponible, usando daño básico")
+				local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+				if humanoide then
+					humanoide:TakeDamage(danioBase)
+				end
+			end
+
+			-- Duración de la marca aumenta con el nivel
+			local duracionMarca = 8 + 2 * (nivelHabilidad - 1)
+			modelo:SetAttribute("MarcaOscuridad", true)
+			print("🌑 Marca de Oscuridad aplicada a", modelo.Name, "Duración:", duracionMarca)
+
+			-- Efecto visual de marca (servidor) - partículas básicas
+			if modelo:FindFirstChild("HumanoidRootPart") then
+				local aura = Instance.new("ParticleEmitter")
+				aura.Texture = "rbxassetid://241594419"
+				aura.Lifetime = NumberRange.new(0.5)
+				aura.Rate = 50
+				aura.Speed = NumberRange.new(0)
+				aura.Size = NumberSequence.new(2)
+				aura.Color = ColorSequence.new(Color3.fromRGB(80, 0, 160))
+				aura.LightEmission = 1
+				aura.Parent = modelo.HumanoidRootPart
+				Debris:AddItem(aura, duracionMarca)
+			end
+
+			-- Remover marca después del tiempo
+			task.delay(duracionMarca, function()
+				if modelo and modelo:GetAttribute("MarcaOscuridad") then
+					modelo:SetAttribute("MarcaOscuridad", false)
+					print("🌑 Marca de Oscuridad removida de", modelo.Name)
+				end
+			end)
+
+			-- Desconectar y destruir
+			if conexion then conexion:Disconnect() end
+			proyectil:Destroy()
+		end)
+
+		-- Auto-destrucción después de 3 segundos
+		Debris:AddItem(proyectil, 3)
+		print("🗡️ Lanza Sombría lanzada - Nivel:", nivelHabilidad)
+	end or nil
+}
+-- ⚡ Habilidad 3: Golpe del Vacío
+BlacktorModule["3"] = {
+	Nombre = "Golpe del Vacío",
+	Descripcion = "Te teleportas detrás de un enemigo marcado, ignorando su armadura.",
+	Cooldown = 15,
+	Funcion = RunService:IsServer() and function(character, nivelHabilidad)
+		print("[BlacktorModule][Golpe del Vacío] Activada por:", character.Name, "Nivel:", nivelHabilidad)
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		-- Buscar enemigo marcado más cercano
+		local objetivo = nil
+		local distanciaMinima = math.huge
+
+		for _, modelo in pairs(workspace:GetDescendants()) do
+			if modelo:IsA("Model") and modelo ~= character then
+				if modelo:GetAttribute("MarcaOscuridad") then
+					local objetivoHrp = modelo:FindFirstChild("HumanoidRootPart")
+					if objetivoHrp then
+						local distancia = (objetivoHrp.Position - hrp.Position).Magnitude
+						-- Rango aumenta con el nivel
+						local rangoMaximo = 150 + 50 * (nivelHabilidad - 1)
+						if distancia < distanciaMinima and distancia <= rangoMaximo then
+							objetivo = modelo
+							distanciaMinima = distancia
+						end
+					end
+				end
+			end
+		end
+
+		if not objetivo then
+			print("❌ No se encontró enemigo marcado para Golpe del Vacío")
+			return false
+		end
+
+		local objetivoHrp = objetivo:FindFirstChild("HumanoidRootPart")
+		if not objetivoHrp then return false end
+
+		-- Obtener RemoteEvents
+		local GolpeVacioRemote = game.ReplicatedStorage:FindFirstChild("GolpeVacioEvent")
+		if not GolpeVacioRemote then
+			warn("No se encontró el RemoteEvent GolpeVacioEvent")
+			return
+		end
+
+		-- Enviar sonido de inicio de teletransporte
+		local player = Players:GetPlayerFromCharacter(character)
+		if player then
+			GolpeVacioRemote:FireClient(player, "Inicio", hrp.Position)
+		end
+
+		-- Teleportarse detrás del objetivo
+		local direccion = (objetivoHrp.CFrame.LookVector * -1) * 4
+		local nuevaPosicion = objetivoHrp.Position + direccion
+
+		-- Verificar posición válida
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Blacklist
+		params.FilterDescendantsInstances = {character, objetivo}
+
+		local resultado = workspace:Raycast(nuevaPosicion, Vector3.new(0, -5, 0), params)
+		if resultado then
+			nuevaPosicion = resultado.Position + Vector3.new(0, 3, 0)
+		end
+
+		-- Teletransportar
+		hrp.CFrame = CFrame.new(nuevaPosicion)
+
+		-- Enviar efectos de llegada
+		GolpeVacioRemote:FireAllClients("Llegada", nuevaPosicion)
+
+		-- Aplicar daño que ignora armadura usando CombatManager
+		-- Daño aumenta con el nivel (15% más por nivel)
+		local fuerza = character:GetAttribute("Fuerza") or 0
+		local danioBase = math.floor(fuerza * (2.2 + 0.15 * (nivelHabilidad - 1)))
+		local armaduraObjetivo = objetivo:GetAttribute("Defensa") or 0
+		local danioReal = danioBase + (armaduraObjetivo * 0.4)  -- Ignora 40% de armadura
+
+		if CombatManager then
+			CombatManager.AplicarDanioSegura(character, objetivo, danioReal)
+		else
+			local humanoide = objetivo:FindFirstChildOfClass("Humanoid")
+			if humanoide then
+				humanoide:TakeDamage(danioReal)
+			end
+		end
+
+		-- Remover marca después del ataque
+		objetivo:SetAttribute("MarcaOscuridad", false)
+
+		print("⚡ Golpe del Vacío ejecutado en", objetivo.Name, "Daño:", danioReal, "Nivel:", nivelHabilidad)
+		return true
+	end or nil
+}
+
+-- 🌌 Habilidad 4 (Ultimate): Prisión de Éter Negro
+BlacktorModule["4"] = {
+	Nombre = "Prisión de Éter Negro",
+	Descripcion = "Crea una esfera de oscuridad que silencia y ralentiza a los enemigos.",
+	Cooldown = 90,
+	Funcion = RunService:IsServer() and function(character, nivelHabilidad)
+		print("[BlacktorModule][Prisión de Éter Negro] Activada por:", character.Name, "Nivel:", nivelHabilidad)
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		-- Crear la esfera de prisión (usando el modelo PrisionSphere)
+		local prisionSphere = game.ReplicatedStorage:FindFirstChild("PrisionSphere")
+		if not prisionSphere then
+			warn("❌ No se encontró el modelo 'PrisionSphere' en ReplicatedStorage")
+			return
+		end
+
+		local sphere = prisionSphere:Clone()
+		sphere.Position = hrp.Position
+		sphere.Parent = workspace
+
+		-- Ajustar el tamaño de la esfera según el nivel
+		local radioBase = 20
+		local radio = radioBase + 5 * (nivelHabilidad - 1)  -- +5 unidades por nivel
+		sphere.Size = Vector3.new(radio * 2, radio * 2, radio * 2)
+
+		-- Aplicar efectos a todos los enemigos en el área
+		local posicion = hrp.Position
+		local enemigos = {}
+
+		-- Buscar enemigos en el radio
+		for _, modelo in pairs(workspace:GetChildren()) do
+			if modelo:IsA("Model") and modelo ~= character then
+				local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+				local objetivoHrp = modelo:FindFirstChild("HumanoidRootPart")
+				if humanoide and humanoide.Health > 0 and objetivoHrp then
+					local distancia = (objetivoHrp.Position - posicion).Magnitude
+					if distancia <= radio then
+						-- Verificar si son enemigos
+						if EquipoManager and EquipoManager.SonEnemigos(character, modelo) then
+							table.insert(enemigos, modelo)
+						end
+					end
+				end
+			end
+		end
+
+		for _, enemigo in ipairs(enemigos) do
+			-- Duración de efectos aumenta con el nivel
+			local duracionBase = 5
+			local duracion = duracionBase + 1 * (nivelHabilidad - 1)
+
+			-- Aplicar silencio y ralentización
+			if EstadoManager then
+				EstadoManager.AplicarEstado(enemigo, "Silenciado", duracion)
+				EstadoManager.AplicarEstado(enemigo, "Ralentizado", duracion)
+			end
+
+			-- Reducir visión (se maneja en cliente)
+			enemigo:SetAttribute("VisionReducida", true)
+
+			-- Efecto visual en enemigos
+			if enemigo:FindFirstChild("HumanoidRootPart") then
+				local efectoOscuro = Instance.new("ParticleEmitter")
+				efectoOscuro.Texture = "rbxassetid://241594419"
+				efectoOscuro.Lifetime = NumberRange.new(0.6)
+				efectoOscuro.Rate = 40
+				efectoOscuro.Speed = NumberRange.new(0)
+				efectoOscuro.Size = NumberSequence.new(3)
+				efectoOscuro.Color = ColorSequence.new(Color3.fromRGB(10, 0, 30))
+				efectoOscuro.Parent = enemigo.HumanoidRootPart
+				Debris:AddItem(efectoOscuro, duracion)
+			end
+
+			-- Limpiar después de la duración
+			task.delay(duracion, function()
+				if enemigo and enemigo:GetAttribute("VisionReducida") then
+					enemigo:SetAttribute("VisionReducida", false)
+				end
+			end)
+		end
+
+		-- Blacktor se vuelve imparable dentro de su prisión
+		-- Duración de invulnerabilidad aumenta con el nivel
+		local duracionInvulnerable = 5 + 1 * (nivelHabilidad - 1)
+		if EstadoManager then
+			EstadoManager.AplicarEstado(character, "Invulnerable", duracionInvulnerable)
+		end
+
+		-- Aumentar velocidad de movimiento de Blacktor
+		local humanoide = character:FindFirstChildOfClass("Humanoid")
+		if humanoide then
+			local velocidadOriginal = humanoide.WalkSpeed
+			-- Bonus de velocidad aumenta con el nivel
+			local multiplicadorVelocidad = 2.5 + 0.2 * (nivelHabilidad - 1)
+			humanoide.WalkSpeed = velocidadOriginal * multiplicadorVelocidad
+
+			-- Restaurar después de la duración
+			task.delay(duracionInvulnerable, function()
+				if humanoide and humanoide.Parent then
+					humanoide.WalkSpeed = velocidadOriginal
+				end
+			end)
+		end
+
+		-- Trigger visual effect on client
+		if BlacktorPrisonVisual then
+			BlacktorPrisonVisual:FireAllClients(posicion, radio)
+		end
+
+		-- Remover la esfera después de la duración
+		Debris:AddItem(sphere, duracionInvulnerable + 1)
+
+		print("🌌 Prisión de Éter Negro activada - Enemigos afectados:", #enemigos, "Nivel:", nivelHabilidad)
+		return true
+	end or nil
+}
+
+return BlacktorModule
