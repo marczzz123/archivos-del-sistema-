@@ -1,0 +1,293 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+
+-- Detectar si es dispositivo móvil usando UserInputService
+local isMobile = UserInputService.TouchEnabled
+
+print("Dispositivo móvil detectado:", isMobile)
+
+-- IDs de animaciones para Aturdido (R6 y R15)
+local ANIMACION_ATURDIDO_R6 = "117330954957222" -- Reemplaza con tu ID de animación R6
+local ANIMACION_ATURDIDO_R15 = "117330954957222" -- Reemplaza con tu ID de animación R15
+
+-- Configuración optimizada para móvil
+local estadosConfig = {
+	Aturdido = {
+		icono = "rbxassetid://118585888125028",
+		prioridad = 1,
+		tamano = isMobile and UDim2.new(5, 0, 5, 0) or UDim2.new(3, 0, 3, 0),
+		color = Color3.fromRGB(255, 0, 0),
+		brillo = true
+	},
+	Silenciado = {
+		icono = "rbxassetid://85119982844058",
+		prioridad = 2,
+		tamano = isMobile and UDim2.new(4, 0, 4, 0) or UDim2.new(2.5, 0, 2.5, 0),
+		color = Color3.fromRGB(0, 0, 255),
+		brillo = true
+	},
+	Ralentizado = {
+		icono = "rbxassetid://92898165479020",
+		prioridad = 3,
+		tamano = isMobile and UDim2.new(4, 0, 4, 0) or UDim2.new(2.5, 0, 2.5, 0),
+		color = Color3.fromRGB(255, 165, 0),
+		brillo = true
+	},
+	Invulnerable = {
+		icono = "rbxassetid://84438065353860",
+		prioridad = 5,
+		tamano = isMobile and UDim2.new(4, 0, 4, 0) or UDim2.new(2.5, 0, 2.5, 0),
+		color = Color3.fromRGB(0, 255, 0),
+		brillo = true
+	},
+	Inmovilizado = {
+		icono = "rbxassetid://120090211901646",
+		prioridad = 2,
+		tamano = isMobile and UDim2.new(4, 0, 4, 0) or UDim2.new(2.5, 0, 2.5, 0),
+		color = Color3.fromRGB(255, 255, 0),
+		brillo = true
+	},
+	Vulnerable = {
+		icono = "rbxassetid://104708847976672",
+		prioridad = 6,
+		tamano = isMobile and UDim2.new(4, 0, 4, 0) or UDim2.new(2.5, 0, 2.5, 0),
+		color = Color3.fromRGB(255, 0, 255),
+		brillo = true
+	},
+}
+
+print("EstadoVisualClient cargado - Móvil:", isMobile)
+
+-- Almacenamiento de efectos activos
+local efectosActivos = {}
+local animacionesAturdido = {} -- Almacena las animaciones de aturdido por personaje
+
+-- Conectar al RemoteEvent
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local EstadoRemoteEvent = ReplicatedStorage:WaitForChild("EstadoRemoteEvent")
+
+-- Función para cargar y reproducir animación de aturdido
+local function reproducirAnimacionAturdido(personaje)
+	local humanoide = personaje:FindFirstChildOfClass("Humanoid")
+	if not humanoide then return end
+
+	-- Determinar si es R6 o R15
+	local esR15 = humanoide.RigType == Enum.HumanoidRigType.R15
+	local animationId = esR15 and ANIMACION_ATURDIDO_R15 or ANIMACION_ATURDIDO_R6
+
+	if not animationId or animationId == "TU_ID_DE_ANIMACION_R6_AQUI" or animationId == "TU_ID_DE_ANIMACION_R15_AQUI" then
+		warn("⚠️ Configura los IDs de animación de aturdido en EstadoVisualClient.lua")
+		return
+	end
+
+	-- Cargar la animación
+	local animacion = Instance.new("Animation")
+	animacion.AnimationId = "rbxassetid://" .. animationId
+
+	local track = humanoide:LoadAnimation(animacion)
+	animacionesAturdido[personaje] = track
+
+	-- Configurar la animación para que sea cíclica
+	track.Looped = true
+	track:Play()
+
+	print("🎭 Animación de aturdido reproducida en " .. personaje.Name .. " (" .. (esR15 and "R15" or "R6") .. ")")
+end
+
+-- Función para detener animación de aturdido
+local function detenerAnimacionAturdido(personaje)
+	local track = animacionesAturdido[personaje]
+	if track then
+		track:Stop()
+		animacionesAturdido[personaje] = nil
+		print("🎭 Animación de aturdido detenida en " .. personaje.Name)
+	end
+end
+
+-- Función para crear un icono con efectos mejorados
+local function crearIconoEstado(personaje, estado, config, posicion)
+	local cabeza = personaje:FindFirstChild("Head")
+	if not cabeza then 
+		print("No se encontró cabeza para:", personaje.Name)
+		return nil 
+	end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = config.tamano
+	billboard.StudsOffset = Vector3.new(0, 3.5 + (posicion * (isMobile and 3 or 2)), 0)
+	billboard.Adornee = cabeza
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = isMobile and 250 or 150
+	billboard.Parent = cabeza
+
+	local imagen = Instance.new("ImageLabel")
+	imagen.Size = UDim2.new(1, 0, 1, 0)
+	imagen.BackgroundTransparency = 1
+	imagen.Image = config.icono
+	imagen.ImageColor3 = config.color or Color3.fromRGB(255, 255, 255)
+	imagen.Parent = billboard
+
+	-- Marco más grueso para móvil
+	local marco = Instance.new("Frame")
+	marco.Size = UDim2.new(1.15, 0, 1.15, 0)
+	marco.Position = UDim2.new(-0.075, 0, -0.075, 0)
+	marco.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	marco.BackgroundTransparency = isMobile and 0.3 or 0.5
+	marco.BorderSizePixel = 0
+	marco.ZIndex = imagen.ZIndex - 1
+	marco.Parent = billboard
+
+	-- Efecto de brillo para estados importantes en móvil
+	if isMobile and config.brillo then
+		local brillo = Instance.new("ImageLabel")
+		brillo.Size = UDim2.new(1.3, 0, 1.3, 0)
+		brillo.Position = UDim2.new(-0.15, 0, -0.15, 0)
+		brillo.BackgroundTransparency = 1
+		brillo.Image = "rbxassetid://9921989472"
+		brillo.ImageColor3 = config.color
+		brillo.ImageTransparency = 0.7
+		brillo.ZIndex = imagen.ZIndex - 2
+		brillo.Parent = billboard
+
+		-- Animación de pulsación para móvil
+		local connection
+		connection = RunService.Heartbeat:Connect(function(deltaTime)
+			if not brillo or not brillo.Parent then
+				connection:Disconnect()
+				return
+			end
+
+			local scale = 1 + math.sin(tick() * 3) * 0.1
+			brillo.Size = UDim2.new(1.3 * scale, 0, 1.3 * scale, 0)
+			brillo.Position = UDim2.new(-0.15 * scale, 0, -0.15 * scale, 0)
+		end)
+	end
+
+	print("✅ Icono creado para " .. estado .. " en " .. personaje.Name .. " (Móvil: " .. tostring(isMobile) .. ")")
+	return billboard
+end
+
+-- Función para actualizar todos los efectos de un personaje
+local function actualizarEfectosPersonaje(personaje)
+	if not personaje:IsA("Model") then return end
+
+	-- Limpiar efectos existentes
+	if efectosActivos[personaje] then
+		for _, billboard in pairs(efectosActivos[personaje]) do
+			billboard:Destroy()
+		end
+		efectosActivos[personaje] = nil
+	end
+
+	-- Obtener estados activos ordenados por prioridad
+	local estadosActivos = {}
+	for estado, config in pairs(estadosConfig) do
+		if personaje:GetAttribute(estado) then
+			table.insert(estadosActivos, {estado = estado, prioridad = config.prioridad})
+			print("📋 Estado detectado: " .. estado .. " en " .. personaje.Name)
+		end
+	end
+
+	-- Ordenar por prioridad
+	table.sort(estadosActivos, function(a, b)
+		return a.prioridad < b.prioridad
+	end)
+
+	-- Crear nuevos efectos
+	efectosActivos[personaje] = {}
+	for i, estadoInfo in ipairs(estadosActivos) do
+		local config = estadosConfig[estadoInfo.estado]
+		efectosActivos[personaje][estadoInfo.estado] = crearIconoEstado(personaje, estadoInfo.estado, config, i - 1)
+	end
+
+	print("✅ Efectos actualizados para: " .. personaje.Name .. " (Total: " .. #estadosActivos .. ")")
+end
+
+-- Función para conectar eventos de atributos de un personaje
+local function conectarAtributosPersonaje(personaje)
+	if not personaje:IsA("Model") then return end
+
+	print("🔗 Conectando atributos para: " .. personaje.Name)
+
+	-- Conectar eventos de cambio para todos los estados
+	for estado in pairs(estadosConfig) do
+		personaje:GetAttributeChangedSignal(estado):Connect(function()
+			local valor = personaje:GetAttribute(estado)
+			print("🔄 Atributo cambiado: " .. estado .. " = " .. tostring(valor) .. " en " .. personaje.Name)
+			actualizarEfectosPersonaje(personaje)
+		end)
+	end
+
+	-- Estado inicial
+	actualizarEfectosPersonaje(personaje)
+end
+
+-- Escuchar eventos del servidor para animaciones de aturdido
+EstadoRemoteEvent.OnClientEvent:Connect(function(accion, parametro1, parametro2)
+	if accion == "ReproducirAnimacionAturdido" then
+		local personaje = parametro1 or player.Character
+		if personaje then
+			reproducirAnimacionAturdido(personaje)
+		end
+	elseif accion == "DetenerAnimacionAturdido" then
+		local personaje = parametro1 or player.Character
+		if personaje then
+			detenerAnimacionAturdido(personaje)
+		end
+	end
+end)
+
+-- Inicializar con personajes existentes
+for _, child in ipairs(workspace:GetChildren()) do
+	if child:IsA("Model") and child:FindFirstChild("Humanoid") then
+		task.spawn(function()
+			task.wait(1)
+			conectarAtributosPersonaje(child)
+		end)
+	end
+end
+
+-- Conectar nuevos personajes
+workspace.ChildAdded:Connect(function(child)
+	if child:IsA("Model") and child:FindFirstChild("Humanoid") then
+		task.spawn(function()
+			task.wait(1)
+			conectarAtributosPersonaje(child)
+		end)
+	end
+end)
+
+-- Limpiar efectos cuando se elimina un personaje
+workspace.ChildRemoved:Connect(function(child)
+	if efectosActivos[child] then
+		for _, billboard in pairs(efectosActivos[child]) do
+			billboard:Destroy()
+		end
+		efectosActivos[child] = nil
+		print("🗑️ Efectos limpiados para: " .. child.Name)
+	end
+
+	-- Limpiar animaciones
+	if animacionesAturdido[child] then
+		animacionesAturdido[child]:Stop()
+		animacionesAturdido[child] = nil
+		print("🗑️ Animación limpiada para: " .. child.Name)
+	end
+end)
+
+-- También conectar cuando el jugador cambia de personaje
+if player.Character then
+	task.spawn(function()
+		task.wait(1)
+		conectarAtributosPersonaje(player.Character)
+	end)
+end
+
+player.CharacterAdded:Connect(function(character)
+	task.spawn(function()
+		task.wait(1)
+		conectarAtributosPersonaje(character)
+	end)
+end)
