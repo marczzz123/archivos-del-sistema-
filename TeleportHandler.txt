@@ -1,0 +1,14 @@
+local Players = game:GetService("Players")
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(character)
+		local lugarSeguro = workspace:WaitForChild("lugarseguro")
+		wait(0.1)
+
+		-- Solo mover si es la primera vez
+		if not player:GetAttribute("TeletransportadoInicial") then
+			character:SetPrimaryPartCFrame(lugarSeguro.CFrame + Vector3.new(0, 3, 0))
+			player:SetAttribute("TeletransportadoInicial", true)
+		end
+	end)
+end)
