@@ -1,0 +1,223 @@
+-- ModuleScript: SistemaInvulnerabilidadTorres
+local SistemaInvulnerabilidadTorres = {}
+SistemaInvulnerabilidadTorres.__index = SistemaInvulnerabilidadTorres
+
+-- 🔒 REGISTRO DE DEPENDENCIAS ENTRE TORRES
+local dependenciasTorres = {
+	-- Templarios de la Luz
+	["TemplariosDeLaLuz"] = {
+		-- Línea Central
+		["T_Torre_Cen_2"] = {"T_Torre_Cen_3"},
+		["T_Torre_Cen_1"] = {"T_Torre_Cen_2"},
+		["T_Evo_Cen_1"] = {"T_Torre_Cen_1", "T_Torre_Der_1", "T_Torre_Izq_1"},
+		["T_Evo_Cen_2"] = {"T_Torre_Cen_1", "T_Torre_Der_1", "T_Torre_Izq_1"},
+
+		-- Línea Derecha
+		["T_Torre_Der_2"] = {"T_Torre_Der_3"},
+		["T_Torre_Der_1"] = {"T_Torre_Der_2"},
+		["T_Evo_Der_1"] = {"T_Torre_Cen_1", "T_Torre_Der_1", "T_Torre_Izq_1"},
+		["T_Evo_Der_2"] = {"T_Torre_Cen_1", "T_Torre_Der_1", "T_Torre_Izq_1"},
+
+		-- Línea Izquierda
+		["T_Torre_Izq_2"] = {"T_Torre_Izq_3"},
+		["T_Torre_Izq_1"] = {"T_Torre_Izq_2"},
+		["T_Evo_Izq_1"] = {"T_Torre_Cen_1", "T_Torre_Der_1", "T_Torre_Izq_1"},
+		["T_Evo_Izq_2"] = {"T_Torre_Cen_1", "T_Torre_Der_1", "T_Torre_Izq_1"},
+
+		-- Núcleo
+		["T_Nucleo"] = {"T_Dragon_1", "T_Dragon_2"}
+	},
+
+	-- Hijos del Vacío
+	["HijosDelVacio"] = {
+		-- Línea Central
+		["V_Torre_Cen_2"] = {"V_Torre_Cen_3"},
+		["V_Torre_Cen_1"] = {"V_Torre_Cen_2"},
+		["V_Evo_Cen_1"] = {"V_Torre_Cen_1", "V_Torre_Der_1", "V_Torre_Izq_1"},
+		["V_Evo_Cen_2"] = {"V_Torre_Cen_1", "V_Torre_Der_1", "V_Torre_Izq_1"},
+
+		-- Línea Derecha
+		["V_Torre_Der_2"] = {"V_Torre_Der_3"},
+		["V_Torre_Der_1"] = {"V_Torre_Der_2"},
+		["V_Evo_Der_1"] = {"V_Torre_Cen_1", "V_Torre_Der_1", "V_Torre_Izq_1"},
+		["V_Evo_Der_2"] = {"V_Torre_Cen_1", "V_Torre_Der_1", "V_Torre_Izq_1"},
+
+		-- Línea Izquierda
+		["V_Torre_Izq_2"] = {"V_Torre_Izq_3"},
+		["V_Torre_Izq_1"] = {"V_Torre_Izq_2"},
+		["V_Evo_Izq_1"] = {"V_Torre_Cen_1", "V_Torre_Der_1", "V_Torre_Izq_1"},
+		["V_Evo_Izq_2"] = {"V_Torre_Cen_1", "V_Torre_Der_1", "V_Torre_Izq_1"},
+
+		-- Núcleo
+		["V_Nucleo"] = {"V_Dragon_1", "V_Dragon_2"}
+	}
+}
+
+-- 🔍 REGISTRO DE TORRES DESTRUIDAS
+local torresDestruidas = {
+	["TemplariosDeLaLuz"] = {},
+	["HijosDelVacio"] = {}
+}
+
+-- 🛡️ TORRES INMUNES AL INICIO (Torres 2, 1, Evo y Núcleo)
+local torresInicialmenteInmunes = {
+	"T_Torre_Cen_2", "T_Torre_Cen_1", "T_Evo_Cen_1", "T_Evo_Cen_2",
+	"T_Torre_Der_2", "T_Torre_Der_1", "T_Evo_Der_1", "T_Evo_Der_2", 
+	"T_Torre_Izq_2", "T_Torre_Izq_1", "T_Evo_Izq_1", "T_Evo_Izq_2",
+	"T_Nucleo",
+
+	"V_Torre_Cen_2", "V_Torre_Cen_1", "V_Evo_Cen_1", "V_Evo_Cen_2",
+	"V_Torre_Der_2", "V_Torre_Der_1", "V_Evo_Der_1", "V_Evo_Der_2",
+	"V_Torre_Izq_2", "V_Torre_Izq_1", "V_Evo_Izq_1", "V_Evo_Izq_2",
+	"V_Nucleo"
+}
+
+function SistemaInvulnerabilidadTorres.Init()
+	print("🛡️ Inicializando sistema de invulnerabilidad de torres...")
+
+	-- Configurar torres existentes
+	for _, torre in ipairs(workspace:GetChildren()) do
+		if torre:IsA("Model") then
+			SistemaInvulnerabilidadTorres.ConfigurarTorre(torre)
+		end
+	end
+
+	-- Listener para nuevas torres
+	workspace.ChildAdded:Connect(function(child)
+		if child:IsA("Model") then
+			task.wait(0.5) -- Esperar a que se configuren atributos
+			SistemaInvulnerabilidadTorres.ConfigurarTorre(child)
+		end
+	end)
+
+	print("✅ Sistema de invulnerabilidad listo")
+end
+
+function SistemaInvulnerabilidadTorres.ConfigurarTorre(torre)
+	local nombre = torre.Name
+	local equipo = torre:GetAttribute("Equipo")
+
+	if not equipo then
+		return -- Torre no configurada aún
+	end
+
+	-- Verificar si esta torre debe ser inmune al inicio
+	local esInmuneInicial = false
+	for _, torreInmune in ipairs(torresInicialmenteInmunes) do
+		if nombre == torreInmune then
+			esInmuneInicial = true
+			break
+		end
+	end
+
+	if esInmuneInicial then
+		SistemaInvulnerabilidadTorres.HacerInmune(torre, true)
+		print("🛡️ Torre inicialmente inmune: " .. nombre)
+	else
+		SistemaInvulnerabilidadTorres.HacerInmune(torre, false)
+		print("🎯 Torre inicialmente vulnerable: " .. nombre)
+	end
+
+	-- Conectar evento de destrucción
+	local vida = torre:FindFirstChild("Vida")
+	if vida then
+		vida:GetPropertyChangedSignal("Value"):Connect(function()
+			if vida.Value <= 0 then
+				SistemaInvulnerabilidadTorres.OnTorreDestruida(torre, equipo, nombre)
+			end
+		end)
+	end
+end
+
+function SistemaInvulnerabilidadTorres.HacerInmune(torre, inmune)
+	if inmune then
+		torre:SetAttribute("Invulnerable", true)
+		-- Aquí puedes agregar efectos visuales de invulnerabilidad
+		-- Ejemplo: brillo dorado, partículas, etc.
+	else
+		torre:SetAttribute("Invulnerable", false)
+		-- Remover efectos visuales de invulnerabilidad
+	end
+end
+
+function SistemaInvulnerabilidadTorres.OnTorreDestruida(torre, equipo, nombreTorre)
+	print("💥 Torre destruida: " .. nombreTorre .. " (" .. equipo .. ")")
+
+	-- Registrar torre destruida
+	if not torresDestruidas[equipo] then
+		torresDestruidas[equipo] = {}
+	end
+	torresDestruidas[equipo][nombreTorre] = true
+
+	-- Verificar dependencias y exponer nuevas torres
+	SistemaInvulnerabilidadTorres.VerificarDependencias(equipo, nombreTorre)
+end
+
+function SistemaInvulnerabilidadTorres.VerificarDependencias(equipo, torreDestruida)
+	local equipoDeps = dependenciasTorres[equipo]
+	if not equipoDeps then return end
+
+	-- Revisar todas las torres que dependían de la torre destruida
+	for torreDependiente, torresRequeridas in pairs(equipoDeps) do
+		-- Verificar si esta torre dependiente existe y sigue inmune
+		local torre = workspace:FindFirstChild(torreDependiente)
+		if torre and torre:GetAttribute("Invulnerable") then
+			-- Verificar si TODAS las torres requeridas están destruidas
+			local todasDestruidas = true
+			for _, torreRequerida in ipairs(torresRequeridas) do
+				if not torresDestruidas[equipo][torreRequerida] then
+					todasDestruidas = false
+					break
+				end
+			end
+
+			if todasDestruidas then
+				-- ¡EXPOSICIÓN! La torre ahora es vulnerable
+				SistemaInvulnerabilidadTorres.HacerInmune(torre, false)
+				print("🎯 TORRE EXPUESTA: " .. torreDependiente .. " ahora es vulnerable!")
+
+				-- Anunciar exposición (puedes agregar UI/efectos aquí)
+				SistemaInvulnerabilidadTorres.AnunciarExposicion(torre)
+			end
+		end
+	end
+end
+
+function SistemaInvulnerabilidadTorres.AnunciarExposicion(torre)
+	local nombre = torre.Name
+	local equipo = torre:GetAttribute("Equipo")
+
+	print("🚨 ALERTA: " .. nombre .. " del equipo " .. equipo .. " ahora es vulnerable!")
+
+	-- Efectos visuales/sonoros de exposición
+	local explosion = Instance.new("Explosion")
+	explosion.Position = torre:GetPrimaryPartCFrame().Position
+	explosion.BlastRadius = 15
+	explosion.BlastPressure = 0
+	explosion.Visible = false -- Solo sonido
+	explosion.Parent = workspace
+
+	-- Aquí puedes agregar notificaciones UI para los jugadores
+end
+
+function SistemaInvulnerabilidadTorres.DebugEstado()
+	print("\n=== 🛡️ DEBUG SISTEMA INMUNIDAD ===")
+	for equipo, torres in pairs(torresDestruidas) do
+		print("Equipo: " .. equipo)
+		for torreNombre, destruida in pairs(torres) do
+			if destruida then
+				print("   💀 " .. torreNombre)
+			end
+		end
+	end
+
+	print("\nTorres actualmente inmunes:")
+	for _, torre in ipairs(workspace:GetChildren()) do
+		if torre:IsA("Model") and torre:GetAttribute("Invulnerable") then
+			print("   🛡️ " .. torre.Name)
+		end
+	end
+	print("==============================\n")
+end
+
+return SistemaInvulnerabilidadTorres
