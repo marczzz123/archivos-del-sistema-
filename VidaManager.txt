@@ -1,0 +1,306 @@
+local nivelHandler = require(game.ServerScriptService.NivelHandler)
+local Players = game:GetService("Players")
+local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+local EstadisticasManager = require(game.ServerScriptService:WaitForChild("EstadisticasManager"))
+
+local VidaManager = {}
+
+-- Table to store Died connections for cleanup
+local humanoidConnections = {}
+
+-- 🧠 🔍 NUEVA FUNCIÓN: Detectar jugadores en un radio determinado
+function VidaManager.ObtenerEnemigosEnRadio(posicion, radio)
+	local enemigos = {}
+
+	for _, jugador in Players:GetPlayers() do
+		local personaje = jugador.Character
+		if personaje and personaje:FindFirstChild("HumanoidRootPart") then
+			local distancia = (personaje.HumanoidRootPart.Position - posicion).Magnitude
+			if distancia <= radio and personaje:FindFirstChildOfClass("Humanoid") then
+				table.insert(enemigos, personaje)
+			end
+		end
+	end
+
+	-- Puedes ampliar esto para incluir NPCs, torres, etc.
+	return enemigos
+end
+
+-- 🚫 NUEVA FUNCIÓN: Verificar si el atacante puede infligir daño (CON SOPORTE PARA HABILIDADES)
+local function AtacantePuedeDanar(atacante, esHabilidad)
+	if not atacante then return true end -- Daño ambiental se permite
+
+	local personajeAtacante = atacante
+	if atacante:IsA("Player") then
+		personajeAtacante = atacante.Character
+	end
+
+	if personajeAtacante and personajeAtacante:IsA("Model") then
+		-- 🌀 Si está aturdido, no puede hacer daño (NI HABILIDADES NI BÁSICOS)
+		if EstadoManager.TieneEstado(personajeAtacante, "Aturdido") then
+			print("🌀 Atacante aturdido, daño cancelado: " .. personajeAtacante.Name)
+			return false
+		end
+
+		-- 🛡️ Si está bloqueado de ataque, SOLO puede hacer daño con HABILIDADES
+		if EstadoManager.TieneEstado(personajeAtacante, "BloqueadoAtaque") then
+			if esHabilidad then
+				print("✅ Atacante bloqueado pero DAÑO DE HABILIDAD permitido: " .. personajeAtacante.Name)
+				return true  -- ✅ LAS HABILIDADES SÍ PUEDEN HACER DAÑO
+			else
+				print("🛡️ Atacante bloqueado, daño básico cancelado: " .. personajeAtacante.Name)
+				return false -- ❌ LOS ATAQUES BÁSICOS NO PUEDEN HACER DAÑO
+			end
+		end
+
+		-- 🔇 Si está silenciado, no puede usar habilidades (pero ataques básicos sí)
+		-- Nota: Los ataques básicos generalmente no se ven afectados por silencio
+		-- pero si quieres que sí, puedes agregar la verificación aquí
+
+		-- 🔒 Si está inmovilizado, no puede moverse pero sí atacar (depende del diseño)
+		-- Por ahora, solo aturdido y bloqueadoAtaque bloquean el daño
+	end
+
+	return true
+end
+
+-- Helper to clean up XPConnected and Died connection on respawn
+local function cleanupHumanoidConnections(character)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local xpMarker = humanoid:FindFirstChild("XPConnected")
+		if xpMarker then
+			xpMarker:Destroy()
+		end
+		if humanoidConnections[humanoid] then
+			humanoidConnections[humanoid]:Disconnect()
+			humanoidConnections[humanoid] = nil
+		end
+	end
+end
+
+-- Connect cleanup on respawn for all players
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(character)
+		cleanupHumanoidConnections(character)
+	end)
+end)
+for _, player in Players:GetPlayers() do
+	player.CharacterAdded:Connect(function(character)
+		cleanupHumanoidConnections(character)
+	end)
+end
+
+-- 💥 Función para configurar el sistema de muerte y recompensas
+local function configurarSistemaMuerte(humanoid, objetivo, atacante)
+	-- Clean up previous connection if exists
+	if humanoidConnections[humanoid] then
+		humanoidConnections[humanoid]:Disconnect()
+		humanoidConnections[humanoid] = nil
+	end
+
+	-- Remove previous XPConnected marker if exists
+	local oldMarker = humanoid:FindFirstChild("XPConnected")
+	if oldMarker then
+		oldMarker:Destroy()
+	end
+
+	-- Create new XPConnected marker for last attacker
+	local marker = Instance.new("ObjectValue")
+	marker.Name = "XPConnected"
+	marker.Value = atacante
+	marker.Parent = humanoid
+
+	-- Connect Died event and store connection for cleanup
+	humanoidConnections[humanoid] = humanoid.Died:Connect(function()
+		-- 🔍 VERIFICAR SI ES UNA MUERTE FALSA (SPAWN)
+		if humanoid.Parent and humanoid.Parent:FindFirstChild("IsSpawning") then
+			print("⚠️ Muerte falsa detectada, ignorando estadísticas para: " .. humanoid.Parent.Name)
+
+			-- Limpiar marker y conexión pero NO registrar estadísticas
+			if marker then
+				marker:Destroy()
+			end
+			if humanoidConnections[humanoid] then
+				humanoidConnections[humanoid]:Disconnect()
+				humanoidConnections[humanoid] = nil
+			end
+			return
+		end
+
+		local finalAttacker = marker.Value
+		-- Remove attacker tag on death
+		if marker then
+			marker:Destroy()
+		end
+
+		-- 🎯 Recompensa de XP
+		local xpValue = objetivo:FindFirstChild("XPReward")
+		if finalAttacker and xpValue and xpValue:IsA("IntValue") then
+			nivelHandler.AgregarExperiencia(finalAttacker, xpValue.Value)
+		end
+
+		-- 💰 Recompensa de Oro
+		local goldValue = objetivo:FindFirstChild("GoldReward")
+		if finalAttacker and goldValue and goldValue:IsA("NumberValue") then
+			local player = nil
+			if finalAttacker:IsA("Player") then
+				player = finalAttacker
+			else
+				player = Players:GetPlayerFromCharacter(finalAttacker)
+			end
+			if player and player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Gold") then
+				player.leaderstats.Gold.Value += goldValue.Value
+			end
+		end
+
+		-- 📊 REGISTRAR ESTADÍSTICAS SOLO PARA MUERTES REALES
+		if finalAttacker then
+			local attackerPlayer = nil
+			if finalAttacker:IsA("Player") then
+				attackerPlayer = finalAttacker
+			else
+				attackerPlayer = Players:GetPlayerFromCharacter(finalAttacker)
+			end
+
+			local victimPlayer = Players:GetPlayerFromCharacter(objetivo)
+
+			if attackerPlayer then
+				EstadisticasManager:RegistrarKill(attackerPlayer)
+			end
+
+			if victimPlayer then
+				EstadisticasManager:RegistrarMuerte(victimPlayer)
+			end
+
+			-- Registrar oro ganado en partida
+			if attackerPlayer and goldValue and goldValue:IsA("NumberValue") then
+				EstadisticasManager:RegistrarOroPartida(attackerPlayer, goldValue.Value)
+			end
+		end
+
+		-- Disconnect and cleanup connection after death
+		if humanoidConnections[humanoid] then
+			humanoidConnections[humanoid]:Disconnect()
+			humanoidConnections[humanoid] = nil
+		end
+	end)
+end
+
+-- 💥 Aplicar daño con defensa, XP, Oro y soporte a humanoides y valores de vida
+function VidaManager:AplicarDanio(atacante, objetivo, cantidadBase, esHabilidad)
+	if not objetivo or not cantidadBase then return end
+
+	-- 🚫 VERIFICAR SI EL ATACANTE PUEDE INFLIGIR DAÑO (CON SOPORTE PARA HABILIDADES)
+	if not AtacantePuedeDanar(atacante, esHabilidad) then
+		return -- Cancelar el daño si el atacante no puede atacar
+	end
+
+	local nombreAtacante = atacante and atacante.Name or "Desconocido"
+	local nombreObjetivo = "Desconocido"
+	if typeof(objetivo) == "Instance" then
+		if objetivo:IsA("Model") then
+			nombreObjetivo = objetivo.Name
+		elseif objetivo:IsA("Player") then
+			nombreObjetivo = objetivo.Name
+		elseif objetivo:IsA("Humanoid") and objetivo.Parent and objetivo.Parent:IsA("Model") then
+			nombreObjetivo = objetivo.Parent.Name
+		end
+	end
+
+	-- 🛡️ VERIFICAR INMUNIDAD/INVULNERABILIDAD PRIMERO
+	if EstadoManager.TieneEstado(objetivo, "Invulnerable") then
+		print("🛡️ Objetivo es invulnerable, daño cancelado para: " .. (nombreObjetivo or "Unknown") .. " | Atacante: " .. (nombreAtacante or "Unknown"))
+		return
+	end
+
+	-- 🔥 Romper invisibilidad si el atacante está invisible
+	if atacante and typeof(atacante) == "Instance" and atacante:IsA("Model") then
+		if EstadoManager.TieneEstado(atacante, "Invisible") then
+			EstadoManager.RemoverEstado(atacante, "Invisible")
+			print("🎭 Invisibilidad rota para: " .. atacante.Name)
+			-- También remover el atributo de sigilo
+			if atacante:GetAttribute("SigiloActivo") then
+				atacante:SetAttribute("SigiloActivo", false)
+			end
+		end
+	end
+
+	-- 🧠 Si el atacante es un minion, usar daño fijo
+	local esMinion = atacante and atacante:GetAttribute("EsMinion")
+	if esMinion then
+		-- Para minions, usar daño fijo sin cálculos de atributos
+		local humanoid = objetivo:FindFirstChildOfClass("Humanoid")
+		local vidaValue = objetivo:FindFirstChild("Vida")
+
+		if humanoid and humanoid.Health > 0 then
+			print("⚔️ [MINION] Daño aplicado a Humanoid: Atacante =", nombreAtacante, "-> Objetivo =", nombreObjetivo, "Cantidad =", cantidadBase)
+			humanoid:TakeDamage(cantidadBase)
+			return
+		elseif vidaValue and (vidaValue:IsA("IntValue") or vidaValue:IsA("NumberValue")) and vidaValue.Value > 0 then
+			vidaValue.Value = vidaValue.Value - cantidadBase
+			print("💥 [MINION] Daño aplicado a Vida: Atacante =", nombreAtacante, "-> Objetivo =", nombreObjetivo, "Cantidad =", cantidadBase)
+			if vidaValue.Value <= 0 then
+				objetivo:Destroy()
+			end
+			return
+		end
+	end
+
+	local humanoid = nil
+	local container = objetivo
+
+	-- 🧠 Determinar defensa del objetivo
+	local defensa = 0
+	if typeof(objetivo) == "Instance" and objetivo:IsA("Model") then
+		defensa = objetivo:GetAttribute("Defensa") or 0
+	end
+
+	-- 🧮 Calcular daño final con defensa
+	local cantidadFinal = math.max(cantidadBase - defensa * 0.7, 1)
+
+	-- 🔍 Procesar objetivo y encontrar humanoid
+	if typeof(objetivo) == "Instance" then
+		if objetivo:IsA("Model") then
+			humanoid = objetivo:FindFirstChildOfClass("Humanoid")
+		elseif objetivo:IsA("Player") and objetivo.Character then
+			humanoid = objetivo.Character:FindFirstChildOfClass("Humanoid")
+			container = objetivo.Character
+			nombreObjetivo = objetivo.Name
+		elseif objetivo:IsA("Humanoid") then
+			humanoid = objetivo
+			container = objetivo.Parent
+			if container and container:IsA("Model") then
+				nombreObjetivo = container.Name
+			end
+		end
+	end
+
+	-- 🔥 Aplicar daño si hay Humanoid válido
+	if humanoid and humanoid.Health > 0 then
+		-- Configurar sistema de muerte y recompensas (UNA SOLA VEZ)
+		configurarSistemaMuerte(humanoid, container, atacante)
+
+		print("⚔️ Daño aplicado a Humanoid: Atacante =", nombreAtacante, "-> Objetivo =", nombreObjetivo, "Cantidad =", cantidadFinal)
+		humanoid:TakeDamage(cantidadFinal)
+
+	elseif typeof(objetivo) == "Instance" and objetivo:IsA("Model") then
+		-- Procesar objetivos con valores de vida (torres, estructuras, etc.)
+		local vida = objetivo:FindFirstChild("Vida")
+		if vida and (vida:IsA("NumberValue") or vida:IsA("IntValue")) then
+			vida.Value -= cantidadFinal
+
+			print("💥 Daño aplicado a Vida: Atacante =", nombreAtacante, "-> Objetivo =", nombreObjetivo, "Cantidad =", cantidadFinal)
+
+			if vida.Value <= 0 then
+				objetivo:Destroy()
+			end
+		else
+			warn("❌ No se pudo aplicar daño: objetivo inválido o sin vida activa:", nombreObjetivo)
+		end
+	else
+		warn("❌ No se pudo aplicar daño: objetivo inválido o sin vida activa:", nombreObjetivo)
+	end
+end
+
+return VidaManager
