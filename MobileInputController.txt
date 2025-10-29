@@ -1,0 +1,24 @@
+-- MobileInputController.lua (colocar en StarterPlayerScripts)
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- Detectar si es dispositivo móvil
+local function IsMobile()
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+
+-- Activar modo móvil si es necesario
+if IsMobile() then
+	-- Añadir feedback táctil (SIN VIBRACIÓN)
+	UserInputService.TouchStarted:Connect(function(input, processed)
+		if not processed then
+			-- Aquí podrías agregar otro tipo de feedback visual o sonoro si quieres
+			-- Pero no es necesario para el funcionamiento básico
+		end
+	end)
+
+	print("✅ Modo móvil activado")
+else
+	print("✅ Modo PC activado")
+end
