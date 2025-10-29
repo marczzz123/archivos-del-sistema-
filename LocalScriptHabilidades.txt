@@ -1,0 +1,566 @@
+--StarterGui/HabilidadesGui(screengui)
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local RemoteEvents = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents")
+local AtaqueMovilEvent = RemoteEvents:WaitForChild("AtaqueMovilEvent")
+
+
+local habilidadesPorPersonaje = require(ReplicatedStorage:WaitForChild("Habilidades"):WaitForChild("HabilidadesModule"))
+
+
+local habilidadEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("HabilidadUsada")
+local MejorarHabilidadEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("MejorarHabilidad")
+local ActualizarHabilidadUIEvent = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("ActualizarHabilidadUI")
+
+local gui = player:WaitForChild("PlayerGui"):WaitForChild("HabilidadesGui")
+local contenedor = gui:WaitForChild("ContenedorBotones")
+local cooldowns = {}
+
+-- Almacenar información de estado de habilidades
+local estadosHabilidades = {
+	silenciado = false,
+	nivelesHabilidades = {1, 1, 1, 1}, -- Niveles actuales de cada habilidad
+	nivelesRequeridos = {1, 2, 3, 6}    -- Niveles requeridos para desbloquear cada habilidad
+}
+
+-- Niveles requeridos para mejorar cada habilidad (debe coincidir con el servidor)
+local NIVELES_PARA_MEJORA = {
+	["1"] = {2, 4, 6, 8},   -- La habilidad 1 se mejora en los niveles 2, 4, 6, 8
+	["2"] = {3, 5, 7, 9},   -- La habilidad 2 se mejora en los niveles 3, 5, 7, 9
+	["3"] = {4, 6, 8, 10},  -- La habilidad 3 se mejora en los niveles 4, 6, 8, 10
+	["4"] = {7, 9, 11, 13}  -- La habilidad 4 se mejora en los niveles 7, 9, 11, 13
+}
+
+-- Obtener botones de mejora (que están fuera del contenedor) - Ahora son ImageButtons
+local botonesMejora = {}
+for i = 1, 4 do
+	local botonMejora = gui:FindFirstChild("BotonMejora" .. i)
+	if botonMejora then
+		botonesMejora[i] = botonMejora
+		botonMejora.Visible = false
+
+		-- Conectar evento de clic para mejorar habilidad (ImageButton)
+		if botonMejora:IsA("ImageButton") then
+			botonMejora.MouseButton1Click:Connect(function()
+				print("[LocalScriptHabilidades] Mejorando habilidad:", i)
+				MejorarHabilidadEvent:FireServer(tostring(i))
+			end)
+		else
+			warn("BotonMejora" .. i .. " no es un ImageButton")
+		end
+	end
+end
+
+local function activarCooldown(boton, duracion)
+	if cooldowns[boton] then
+		return false
+	end
+
+	cooldowns[boton] = true
+
+	local barra = boton:FindFirstChild("BarraCooldown")
+	if not barra then
+		warn("❌ No se encontró BarraCooldown en:", boton.Name)
+	else
+		barra.Size = UDim2.new(1, 0, 0, 0)
+		barra.Position = UDim2.new(0, 0, 1, 0)
+		barra.AnchorPoint = Vector2.new(0, 1)
+		barra.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+		barra.ZIndex = 10
+		barra.Visible = true
+
+		local tween = TweenService:Create(barra, TweenInfo.new(duracion, Enum.EasingStyle.Linear), {
+			Size = UDim2.new(1, 0, 1, 0)
+		})
+
+		tween:Play()
+		tween.Completed:Wait()
+
+		barra.Visible = false
+	end
+
+	cooldowns[boton] = false
+	return true
+end
+
+-- Función para verificar si una habilidad puede ser mejorada
+local function puedeMejorarHabilidad(indiceHabilidad)
+	local character = player.Character
+	if not character then return false end
+
+	local nivelPersonaje = character:GetAttribute("Nivel") or 1
+	local nivelActual = estadosHabilidades.nivelesHabilidades[indiceHabilidad] or 1
+	local teclaHabilidad = tostring(indiceHabilidad)
+
+	-- Verificar si ya está al máximo nivel
+	if nivelActual >= 5 then
+		return false
+	end
+
+	-- Verificar si el personaje ha alcanzado el nivel requerido para la próxima mejora
+	local nivelesMejora = NIVELES_PARA_MEJORA[teclaHabilidad]
+	if not nivelesMejora then
+		return false
+	end
+
+	local nivelRequerido = nivelesMejora[nivelActual]
+	if not nivelRequerido or nivelPersonaje < nivelRequerido then
+		return false
+	end
+
+	return true
+end
+
+-- Función para actualizar el texto de un botón específico
+local function actualizarTextoBoton(boton, nivel)
+	local character = player.Character
+	if not character then return end
+
+	local nombrePersonaje = character:FindFirstChild("NombrePersonaje")
+	if not nombrePersonaje then return end
+
+	local habilidades = habilidadesPorPersonaje[nombrePersonaje.Value]
+	if not habilidades then return end
+
+	local habilidad = habilidades[boton.Name]
+	if habilidad then
+		boton.Text = boton.Name .. ": " .. (habilidad.Nombre or "Habilidad") .. " (Nvl " .. nivel .. ")"
+	end
+end
+
+-- Función para actualizar la apariencia de los botones según el estado
+local function actualizarEstadoBotones()
+	local character = player.Character
+	if not character then return end
+
+	for i = 1, 4 do
+		local boton = contenedor:FindFirstChild(tostring(i))
+		local botonMejora = botonesMejora[i]
+
+		if boton then
+			local iconoSilencio = boton:FindFirstChild("IconoSilencio")
+			local iconoCandado = boton:FindFirstChild("IconoCandado")
+
+			-- Estado de silencio
+			if estadosHabilidades.silenciado then
+				boton.BackgroundColor3 = Color3.fromRGB(150, 150, 150) -- Gris
+				if iconoSilencio then
+					iconoSilencio.Visible = true
+				end
+				boton.Active = false
+
+				-- Ocultar botón de mejora si está silenciado
+				if botonMejora then
+					botonMejora.Visible = false
+				end
+			else
+				if iconoSilencio then
+					iconoSilencio.Visible = false
+				end
+				boton.Active = true
+
+				-- Estado de desbloqueo por nivel
+				local nivelRequerido = estadosHabilidades.nivelesRequeridos[i]
+				local nivelActual = estadosHabilidades.nivelesHabilidades[i] or 1
+
+				if nivelActual == 0 then -- Habilidad bloqueada
+					boton.BackgroundColor3 = Color3.fromRGB(100, 100, 100) -- Gris oscuro
+					if iconoCandado then
+						iconoCandado.Visible = true
+					end
+					boton.Active = false
+
+					-- Ocultar botón de mejora si está bloqueada
+					if botonMejora then
+						botonMejora.Visible = false
+					end
+				else -- Habilidad desbloqueada
+					if iconoCandado then
+						iconoCandado.Visible = false
+					end
+					boton.Active = true
+
+					-- Mostrar botón de mejora solo si puede ser mejorada
+					if botonMejora and nivelActual < 5 then
+						botonMejora.Visible = puedeMejorarHabilidad(i)
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Clic en botones GUI (TextButton para habilidades principales)
+for _, boton in pairs(contenedor:GetChildren()) do
+	if boton:IsA("TextButton") then
+		boton.MouseButton1Click:Connect(function()
+			if not cooldowns[boton] and boton.Visible and boton.Active then
+				local tecla = boton.Name
+				print("[LocalScriptHabilidades] Botón de habilidad presionado, enviando tecla:", tecla)
+				habilidadEvent:FireServer(tecla)
+
+				local character = player.Character
+				local nombrePersonaje = character and character:FindFirstChild("NombrePersonaje")
+				local habilidades = nombrePersonaje and habilidadesPorPersonaje[nombrePersonaje.Value]
+
+				if habilidades and habilidades[tecla] and habilidades[tecla].Cooldown then
+					activarCooldown(boton, habilidades[tecla].Cooldown)
+				end
+			end
+		end)
+	end
+end
+
+-- 🗡️ Ataque básico con clic izquierdo
+local GolpeBasico = ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("GolpeBasico")
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		GolpeBasico:FireServer()
+	end
+end)
+
+-- Teclas del teclado
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+	local keyToNumber = {
+		[Enum.KeyCode.One] = "1",
+		[Enum.KeyCode.Two] = "2",
+		[Enum.KeyCode.Three] = "3",
+		[Enum.KeyCode.Four] = "4"
+	}
+
+	local numero = keyToNumber[input.KeyCode]
+	if numero then
+		print("[LocalScriptHabilidades] Tecla del teclado presionada, enviando tecla:", numero)
+		local character = player.Character
+		local nombrePersonaje = character and character:FindFirstChild("NombrePersonaje")
+		local habilidades = nombrePersonaje and habilidadesPorPersonaje[nombrePersonaje.Value]
+
+		if habilidades and habilidades[numero] then
+			local boton = contenedor:FindFirstChild(numero)
+			if boton and not cooldowns[boton] and boton.Active then
+				habilidadEvent:FireServer(numero)
+				if habilidades[numero].Cooldown then
+					activarCooldown(boton, habilidades[numero].Cooldown)
+				end
+			end
+		end
+	end
+end)
+
+-- Escuchar actualizaciones del servidor
+ActualizarHabilidadUIEvent.OnClientEvent:Connect(function(teclaHabilidad, nuevoNivel, accion)
+	if accion == "MostrarMejora" then
+		-- Mostrar botón de mejora para esta habilidad
+		local index = tonumber(teclaHabilidad)
+		if index and botonesMejora[index] then
+			botonesMejora[index].Visible = true
+			print("[LocalScriptHabilidades] Mostrando botón de mejora para habilidad", teclaHabilidad)
+		end
+	else
+		-- Actualizar nivel de habilidad
+		local index = tonumber(teclaHabilidad)
+		if index then
+			estadosHabilidades.nivelesHabilidades[index] = nuevoNivel
+
+			-- ACTUALIZAR TEXTO DEL BOTÓN
+			local boton = contenedor:FindFirstChild(tostring(index))
+			if boton then
+				actualizarTextoBoton(boton, nuevoNivel)
+			end
+
+			actualizarEstadoBotones()
+			print(string.format("[LocalScriptHabilidades] Habilidad %s actualizada a nivel %d", teclaHabilidad, nuevoNivel))
+		end
+	end
+end)
+
+-- Refactor: función para actualizar los botones de habilidades según el personaje
+local function actualizarBotonesHabilidades(character)
+	local nombrePersonaje = character:FindFirstChild("NombrePersonaje")
+	if not nombrePersonaje then
+		warn("Este personaje no tiene NombrePersonaje")
+		return
+	end
+
+	local habilidades = habilidadesPorPersonaje[nombrePersonaje.Value]
+	if not habilidades then 
+		warn("No se encontraron habilidades para: " .. nombrePersonaje.Value)
+		return 
+	end
+
+	gui.Enabled = true
+
+	for _, boton in pairs(contenedor:GetChildren()) do
+		if boton:IsA("TextButton") then
+			local habilidad = habilidades[boton.Name]
+			if habilidad then
+				-- Obtener el nivel actual de la habilidad
+				local nivel = character:GetAttribute("Habilidad" .. boton.Name .. "Nivel") or 1
+
+				-- Actualizar texto del botón con el nivel
+				actualizarTextoBoton(boton, nivel)
+				boton.Visible = true
+
+				-- Actualizar estado del botón
+				actualizarEstadoBotones()
+			else
+				boton.Visible = false
+			end
+		end
+	end
+end
+
+-- Escuchar cambios en el estado del personaje
+local function configurarObservadores(character)
+	-- Observar cambios en el atributo de silencio
+	if character:GetAttribute("Silenciado") then
+		estadosHabilidades.silenciado = character:GetAttribute("Silenciado")
+		actualizarEstadoBotones()
+	end
+
+	character:GetAttributeChangedSignal("Silenciado"):Connect(function()
+		estadosHabilidades.silenciado = character:GetAttribute("Silenciado")
+		actualizarEstadoBotones()
+		print("Estado de silencio cambiado:", estadosHabilidades.silenciado)
+	end)
+
+	-- Observar cambios en los niveles de habilidades
+	for i = 1, 4 do
+		local attrName = "Habilidad" .. i .. "Nivel"
+		if character:GetAttribute(attrName) then
+			estadosHabilidades.nivelesHabilidades[i] = character:GetAttribute(attrName)
+		end
+
+		character:GetAttributeChangedSignal(attrName):Connect(function()
+			estadosHabilidades.nivelesHabilidades[i] = character:GetAttribute(attrName)
+
+			-- Actualizar texto del botón cuando cambia el nivel
+			local boton = contenedor:FindFirstChild(tostring(i))
+			if boton then
+				actualizarTextoBoton(boton, character:GetAttribute(attrName))
+			end
+
+			actualizarEstadoBotones()
+			print("Nivel de habilidad " .. i .. " cambiado:", estadosHabilidades.nivelesHabilidades[i])
+		end)
+	end
+
+	-- Observar cambios en el nivel del personaje
+	if character:GetAttribute("Nivel") then
+		actualizarEstadoBotones()
+	end
+
+	character:GetAttributeChangedSignal("Nivel"):Connect(function()
+		actualizarEstadoBotones()
+		print("Nivel de personaje cambiado, actualizando botones de mejora")
+	end)
+end
+
+-- Inicialización al reaparecer personaje
+player.CharacterAdded:Connect(function(character)
+	actualizarBotonesHabilidades(character)
+	configurarObservadores(character)
+end)
+
+-- Fallback: Si el personaje ya existe al iniciar el script, actualizar botones inmediatamente
+if player.Character then
+	actualizarBotonesHabilidades(player.Character)
+	configurarObservadores(player.Character)
+end
+
+-- =============================================================================
+-- SISTEMA DE BOTÓN DE ATAQUE PARA MÓVILES (SIN COOLDOWN EN CLIENTE)
+-- =============================================================================
+
+local function crearBotonAtaqueMovil()
+	-- Verificar si ya existe el botón
+	if gui:FindFirstChild("BotonAtaqueMovil") then
+		gui.BotonAtaqueMovil:Destroy()
+	end
+	
+	local botonAtaque = Instance.new("ImageButton")
+	botonAtaque.Name = "BotonAtaqueMovil"
+	botonAtaque.Size = UDim2.new(0, 80, 0, 80)
+	botonAtaque.Position = UDim2.new(0.78, 0, 0.7, 0)
+	botonAtaque.AnchorPoint = Vector2.new(0.5, 0.5)
+	botonAtaque.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+	botonAtaque.BackgroundTransparency = 0.2
+
+	-- ⚠️ CORRECCIÓN: "rbxasset://" ❌ → "rbxassetid://" ✅
+	botonAtaque.Image = "rbxassetid://74379219794470"
+
+	botonAtaque.ScaleType = Enum.ScaleType.Fit
+	botonAtaque.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	botonAtaque.Visible = false
+	botonAtaque.ZIndex = 15
+	botonAtaque.Active = true
+	botonAtaque.Selectable = true
+	botonAtaque.Parent = gui
+
+	-- Agregar icono de espada encima
+	local iconoAtaque = Instance.new("ImageLabel")
+	iconoAtaque.Name = "IconoAtaque"
+	iconoAtaque.Size = UDim2.new(0.6, 0, 0.6, 0)
+	iconoAtaque.Position = UDim2.new(0.5, 0, 0.5, 0)
+	iconoAtaque.AnchorPoint = Vector2.new(0.5, 0.5)
+	iconoAtaque.BackgroundTransparency = 1
+
+	-- Aquí ya estaba bien
+	iconoAtaque.Image = "rbxassetid://74379219794470"
+	iconoAtaque.ScaleType = Enum.ScaleType.Fit
+	iconoAtaque.Parent = botonAtaque
+
+	-- Agregar texto descriptivo
+	local textoBoton = Instance.new("TextLabel")
+	textoBoton.Name = "TextoAtaque"
+	textoBoton.Size = UDim2.new(1, 0, 0.3, 0)
+	textoBoton.Position = UDim2.new(0, 0, 1, 5)
+	textoBoton.BackgroundTransparency = 1
+	textoBoton.Text = "ATACAR"
+	textoBoton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textoBoton.TextScaled = true
+	textoBoton.Font = Enum.Font.SourceSansBold
+	textoBoton.TextStrokeTransparency = 0
+	textoBoton.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	textoBoton.ZIndex = 16
+	textoBoton.Parent = botonAtaque
+
+	-- 🔥 FUNCIÓN SIMPLIFICADA - SIN COOLDOWN EN CLIENTE
+	-- 🔥 FUNCIÓN MEJORADA DE ATAQUE CON COMUNICACIÓN A ANIMACIONES
+	-- 🔥 MODIFICAR ESTA FUNCIÓN - Agregar prints
+	local function ejecutarAtaque()
+		print("🔄 [PASO 1] ejecutarAtaque INICIADO")
+
+		-- ✅ Verificar que el personaje y el humanoide existen
+		local character = player.Character
+		if not character then
+			warn("❌ [PASO 1-ERROR] No hay personaje para atacar")
+			return
+		end
+		print("✅ [PASO 1-A] Personaje encontrado:", character.Name)
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then
+			warn("❌ [PASO 1-ERROR] Personaje sin Humanoid o muerto")
+			return
+		end
+		print("✅ [PASO 1-B] Humanoid válido")
+
+		-- ✅ Verificar que los eventos existen antes de usarlos
+		if not AtaqueMovilEvent then
+			warn("❌ [PASO 1-ERROR] AtaqueMovilEvent es NIL")
+			return
+		end
+		print("✅ [PASO 1-C] AtaqueMovilEvent encontrado")
+
+		if not GolpeBasico then
+			warn("❌ [PASO 1-ERROR] GolpeBasico es NIL")
+			return
+		end
+		print("✅ [PASO 1-D] GolpeBasico encontrado")
+
+		-- ✅ Enviar eventos al servidor
+		print("🎬 [PASO 1-E] Enviando AtaqueMovilEvent al servidor...")
+		AtaqueMovilEvent:FireServer()
+
+		print("🗡️ [PASO 1-F] Enviando GolpeBasico al servidor...")
+		GolpeBasico:FireServer()
+
+		print("✅ [PASO 1-G] Todos los eventos enviados correctamente")
+	end
+
+	-- 🔥 EVENTOS SIMPLIFICADOS - SIN CONTROL DE COOLDOWN
+	botonAtaque.MouseButton1Down:Connect(function()
+		-- Efecto visual al presionar
+		botonAtaque.Size = UDim2.new(0, 70, 0, 70)
+		botonAtaque.BackgroundTransparency = 0.1
+	end)
+
+	botonAtaque.MouseButton1Up:Connect(function()
+		-- Volver al tamaño normal
+		botonAtaque.Size = UDim2.new(0, 80, 0, 80)
+		botonAtaque.BackgroundTransparency = 0.2
+
+		-- Ejecutar ataque (siempre)
+		ejecutarAtaque()
+	end)
+
+	-- 🔥 EVENTO TÁCTIL PRINCIPAL
+	botonAtaque.TouchTap:Connect(function()
+		print("📱 TouchTap detectado - Ejecutando ataque")
+		ejecutarAtaque()
+	end)
+
+	-- Agregar efectos visuales
+	local shadow = Instance.new("UIStroke")
+	shadow.Color = Color3.fromRGB(0, 0, 0)
+	shadow.Thickness = 2
+	shadow.Parent = botonAtaque
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.2, 0)
+	corner.Parent = botonAtaque
+
+	print("✅ Botón de ataque móvil creado correctamente")
+	return botonAtaque
+end
+
+-- 🔥 DETECTAR DISPOSITIVO MÓVIL
+local function esDispositivoMovil()
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+
+-- 🔥 CONFIGURAR VISIBILIDAD DEL BOTÓN MÓVIL
+local function configurarBotonMovil()
+	local botonAtaque = crearBotonAtaqueMovil()
+
+	if esDispositivoMovil() then
+		print("📱 Dispositivo móvil detectado - Activando botón de ataque")
+		botonAtaque.Visible = true
+	else
+		print("🖥️ Dispositivo de escritorio - Ocultando botón de ataque")
+		botonAtaque.Visible = false
+	end
+end
+
+-- 🔥 DETECTAR CAMBIOS EN EL TIPO DE INPUT
+UserInputService.LastInputTypeChanged:Connect(function(inputType)
+	print("🔄 Cambio de input detectado:", inputType.Name)
+	task.wait(0.5)
+	configurarBotonMovil()
+end)
+
+-- 🔥 INICIALIZACIÓN
+local function inicializarSistemaMovil()
+	task.wait(2)
+	print("🎮 Inicializando sistema móvil...")
+	configurarBotonMovil()
+end
+
+-- 🔥 REINICIALIZAR CUANDO APARECE UN NUEVO PERSONAJE
+player.CharacterAdded:Connect(function(character)
+	print("👤 Personaje añadido, configurando botón móvil...")
+	task.wait(1)
+	configurarBotonMovil()
+end)
+
+-- Inicializar el sistema
+inicializarSistemaMovil()
+
+-- Si ya tiene personaje, configurar inmediatamente
+if player.Character then
+	task.spawn(function()
+		task.wait(1)
+		configurarBotonMovil()
+	end)
+end
+
+print("✅ Sistema de ataque móvil inicializado - Cooldown manejado por servidor")
