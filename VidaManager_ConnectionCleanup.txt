@@ -1,0 +1,32 @@
+-- Module to help clean up XPConnected and Died connections on Humanoid respawn
+local Players = game:GetService("Players")
+
+local function cleanupXPConnections(character)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local xpMarker = humanoid:FindFirstChild("XPConnected")
+		if xpMarker then
+			xpMarker:Destroy()
+		end
+		-- Optionally, disconnect any custom connections if stored
+		if humanoid:FindFirstChild("DiedConnection") then
+			local conn = humanoid.DiedConnection.Value
+			if conn and typeof(conn) == "RBXScriptConnection" then
+				conn:Disconnect()
+			end
+			humanoid.DiedConnection:Destroy()
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(character)
+		cleanupXPConnections(character)
+	end)
+end)
+
+for _, player in Players:GetPlayers() do
+	player.CharacterAdded:Connect(function(character)
+		cleanupXPConnections(character)
+	end)
+end
