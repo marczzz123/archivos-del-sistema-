@@ -1,0 +1,112 @@
+-- HabilidadesModule.lua (ReplicatedStorage/Habilidades(folder)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local habilidadesFolder = ReplicatedStorage:WaitForChild("Habilidades")
+
+local Habilidades = {}
+local CharacterModules = {}
+local cooldowns = {}
+
+-- 🔧 Helpers
+local function getCooldownKey(character)
+	if typeof(character) == "Instance" and character:IsA("Player") then
+		return character.UserId
+	elseif typeof(character) == "Instance" and character:FindFirstChildOfClass("Humanoid") then
+		local player = game:GetService("Players"):GetPlayerFromCharacter(character)
+		if player then
+			return player.UserId
+		end
+	end
+	return character
+end
+
+local function isOnCooldown(character, abilityName)
+	local key = getCooldownKey(character)
+	cooldowns[key] = cooldowns[key] or {}
+	local cd = cooldowns[key][abilityName]
+	return cd and cd > os.clock()
+end
+
+local function setCooldown(character, abilityName, duration)
+	local key = getCooldownKey(character)
+	cooldowns[key] = cooldowns[key] or {}
+	cooldowns[key][abilityName] = os.clock() + duration
+end
+
+local function cleanupCooldowns(character)
+	local key = getCooldownKey(character)
+	cooldowns[key] = nil
+end
+
+local function applyAreaEffect(center, radius, filterFunc, effectFunc)
+	for _, obj in workspace:GetChildren() do
+		if obj:IsA("Model") and obj:FindFirstChild("HumanoidRootPart") then
+			local dist = (obj.HumanoidRootPart.Position - center).Magnitude
+			if dist <= radius and (not filterFunc or filterFunc(obj)) then
+				effectFunc(obj)
+			end
+		end
+	end
+end
+
+-- 🔥 Cargar habilidades
+for _, moduleScript in habilidadesFolder:GetChildren() do
+	if moduleScript:IsA("ModuleScript") and moduleScript.Name ~= script.Name then
+		local success, skills = pcall(require, moduleScript)
+		if success and type(skills) == "table" then
+			local wrappedSkills = {}
+			for abilityName, abilityData in skills do
+				if type(abilityData) == "table" then
+					local executeFunction = abilityData.Execute or abilityData.Funcion
+					if type(executeFunction) == "function" then
+						wrappedSkills[abilityName] = {
+							Name = abilityData.Name or abilityName,
+							Descripcion = abilityData.Descripcion or "Sin descripción",
+							Cooldown = abilityData.Cooldown or 0,
+							Tipo = abilityData.Tipo or "Automatica",
+							RequiereAliado = abilityData.RequiereAliado or false,
+							Execute = function(character, target, ...)
+								if character:GetAttribute("Silenciado") then
+									return false
+								end
+								if isOnCooldown(character, abilityName) then
+									return false
+								end
+
+								local nivelHabilidad = character:GetAttribute("Habilidad" .. abilityName .. "Nivel") or 1
+								local cooldownBase = abilityData.Cooldown or 0
+								local cooldownReducido = cooldownBase * (1 - 0.1 * (nivelHabilidad - 1))
+								setCooldown(character, abilityName, cooldownReducido)
+
+								if abilityData.Tipo == "Direccion" then
+									return executeFunction(character, target, nivelHabilidad, ...)
+								elseif abilityData.Tipo == "Seleccion" then
+									return executeFunction(character, target, nivelHabilidad, ...)
+								else
+									return executeFunction(character, nivelHabilidad, ...)
+								end
+							end
+						}
+					else
+						wrappedSkills[abilityName] = abilityData
+					end
+				else
+					wrappedSkills[abilityName] = abilityData
+				end
+			end
+			local charKey = moduleScript.Name:gsub("Module$", "")
+			Habilidades[charKey] = wrappedSkills
+			CharacterModules[charKey] = moduleScript
+		end
+	end
+end
+
+-- 🔄 Exponer helpers
+Habilidades.Helpers = {
+	isOnCooldown = isOnCooldown,
+	setCooldown = setCooldown,
+	applyAreaEffect = applyAreaEffect,
+	cleanupCooldowns = cleanupCooldowns,
+	CharacterModules = CharacterModules,
+}
+
+return Habilidades
