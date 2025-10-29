@@ -1,0 +1,531 @@
+--ReplicatedStorage/CombatManager
+local CombatManager = {}
+
+local Players = game:GetService("Players")
+local EquipoManager = require(game.ReplicatedStorage:WaitForChild("EquipoManager"))
+local Debris = game:GetService("Debris")
+local VidaManager = require(game.ServerScriptService:WaitForChild("VidaManager"))
+local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+local HighlightModule = require(game.ServerScriptService:WaitForChild("HighlightModule"))
+
+-- 🔍 Identificar enemigo desde parte
+function CombatManager.IdentificarEnemigoDesdeParte(parte)
+	print("[CombatManager] IdentificarEnemigoDesdeParte called with parte:", parte and parte.Name or "nil")
+	if not parte then return nil end
+	local candidato = parte
+	while candidato and not candidato:IsA("Model") do
+		candidato = candidato.Parent
+	end
+	if candidato and candidato:IsA("Model") then
+		local humanoide = candidato:FindFirstChildOfClass("Humanoid")
+		if humanoide and humanoide.Health > 0 then
+			print("[CombatManager] Enemigo identificado:", candidato.Name)
+			return candidato
+		end
+	end
+	print("[CombatManager] No enemigo identificado.")
+	return nil
+end
+
+-- 💥 Aplicar daño segura (validaciones de vida y equipo) CON EFECTO VISUAL
+function CombatManager.AplicarDanioSegura(atacante, objetivo, cantidad)
+	print("[CombatManager] AplicarDanioSegura called. Atacante:", atacante and atacante.Name or "nil", "Objetivo:", objetivo and objetivo.Name or "nil", "Cantidad:", cantidad)
+
+	-- 🛑 VERIFICACIONES DETALLADAS
+	if not atacante then 
+		print("❌ [CombatManager] Atacante es nulo")
+		return 
+	end
+	if not objetivo then 
+		print("❌ [CombatManager] Objetivo es nulo")
+		return 
+	end
+
+	-- Verificar estado del objetivo
+	if EstadoManager.TieneEstado and EstadoManager.TieneEstado(objetivo, "Invulnerable") then 
+		print("🛡️ [CombatManager] Objetivo es invulnerable: " .. objetivo.Name)
+		return 
+	end
+
+	-- Verificar equipos con más detalle
+	if not EquipoManager.PuedeAtacar then
+		print("❌ [CombatManager] EquipoManager.PuedeAtacar no existe")
+		return
+	end
+
+	local puedeAtacar = EquipoManager.PuedeAtacar(atacante, objetivo)
+	print("🎯 [CombatManager] EquipoManager.PuedeAtacar result:", puedeAtacar)
+
+	if not puedeAtacar then 
+		print("🚫 [CombatManager] No puede atacar por equipo. Atacante:", atacante.Name, "Objetivo:", objetivo.Name)
+		return 
+	end
+
+	print("✅ [CombatManager] Pasó todas las validaciones, aplicando daño")
+	VidaManager:AplicarDanio(atacante, objetivo, cantidad)
+
+	-- ✨ NUEVO: APLICAR EFECTO VISUAL DE GOLPE
+	CombatManager.AplicarEfectoGolpe(objetivo)
+end
+
+-- ✨ NUEVA FUNCIÓN: Aplicar efecto visual de golpe
+function CombatManager.AplicarEfectoGolpe(objetivo)
+	if not objetivo or not objetivo:IsA("Model") then
+		print("❌ [CombatManager] No se puede aplicar efecto: objetivo inválido")
+		return
+	end
+
+	-- Aplicar efecto de highlight
+	local success, err = pcall(function()
+		HighlightModule.New(objetivo)
+	end)
+
+	if success then
+		print("✨ [CombatManager] Efecto de golpe aplicado a:", objetivo.Name)
+	else
+		warn("❌ [CombatManager] Error al aplicar efecto visual:", err)
+	end
+end
+
+-- 🧛 Aplicar daño con robo de vida CON EFECTO VISUAL
+function CombatManager.AplicarDanioConRoboVida(atacante, objetivo, cantidad)
+	print("[CombatManager] AplicarDanioConRoboVida called. Atacante:", atacante and atacante.Name or "nil", "Objetivo:", objetivo and objetivo.Name or "nil", "Cantidad:", cantidad)
+	if not atacante or not objetivo then 
+		print("[CombatManager] Atacante u objetivo nulo. Cancelando daño.")
+		return 
+	end
+	if EstadoManager.TieneEstado and EstadoManager.TieneEstado(objetivo, "Invulnerable") then 
+		print("[CombatManager] Objetivo es invulnerable. Cancelando daño.")
+		return 
+	end
+	if not EquipoManager.PuedeAtacar(atacante, objetivo) then 
+		print("[CombatManager] No puede atacar por equipo. Cancelando daño.")
+		return 
+	end
+
+	print("[CombatManager] Aplicando daño con robo de vida:", cantidad, "de", atacante.Name, "a", objetivo.Name)
+	VidaManager:AplicarDanio(atacante, objetivo, cantidad)
+
+	-- ✨ NUEVO: APLICAR EFECTO VISUAL
+	CombatManager.AplicarEfectoGolpe(objetivo)
+
+	-- ❤️ Robar vida al atacante
+	local character = atacante.Character
+	if character then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 then
+			local vidaAntes = humanoid.Health
+			humanoid.Health = math.min(humanoid.MaxHealth, humanoid.Health + cantidad)
+			print("💉 Vida robada: " .. cantidad .. " (Antes: " .. vidaAntes .. ", Después: " .. humanoid.Health .. ")")
+		else
+			print("[CombatManager] No se pudo robar vida: Humanoid no válido o muerto.")
+		end
+	else
+		print("[CombatManager] No se pudo robar vida: atacante sin Character.")
+	end
+end
+
+-- 📡 Buscar enemigos en radio
+function CombatManager.BuscarEnemigosEnRadio(origen, radio, personajeOrigen)
+	print("[CombatManager] BuscarEnemigosEnRadio called. Origen:", origen, "Radio:", radio, "PersonajeOrigen:", personajeOrigen and personajeOrigen.Name or "nil")
+	local enemigos = {}
+	for _, modelo in ipairs(workspace:GetDescendants()) do
+		if modelo:IsA("Model") and modelo ~= personajeOrigen then
+			local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+			local hrp = modelo:FindFirstChild("HumanoidRootPart")
+			if humanoide and humanoide.Health > 0 and hrp then
+				local distancia = (hrp.Position - origen).Magnitude
+				if distancia <= radio then
+					if EquipoManager.SonEnemigos(personajeOrigen, modelo) then
+						table.insert(enemigos, modelo)
+						print("[CombatManager] Enemigo encontrado en radio:", modelo.Name, "Distancia:", distancia)
+					end
+				end
+			end
+		end
+	end
+	print("[CombatManager] Total enemigos encontrados:", #enemigos)
+	return enemigos
+end
+
+function CombatManager.BuscarObjetivo(posicion, radio, personajeOrigen)
+	print("[CombatManager] BuscarObjetivo called. Posicion:", posicion, "Radio:", radio, "PersonajeOrigen:", personajeOrigen and personajeOrigen.Name or "nil")
+	for _, modelo in ipairs(workspace:GetDescendants()) do
+		if modelo:IsA("Model") and modelo ~= personajeOrigen then
+			local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+			local hrp = modelo:FindFirstChild("HumanoidRootPart")
+			if humanoide and humanoide.Health > 0 and hrp then
+				local distancia = (hrp.Position - posicion).Magnitude
+				if distancia <= radio then
+					if EquipoManager.SonEnemigos(personajeOrigen, modelo) then
+						print("[CombatManager] Objetivo encontrado:", modelo.Name, "Distancia:", distancia)
+						return modelo
+					end
+				end
+			end
+		end
+	end
+	print("[CombatManager] No objetivo encontrado en radio.")
+	return nil
+end
+
+-- 🔥 SISTEMA DE HITBOXES FÍSICOS (Integrado con tus validaciones)
+function CombatManager.CrearHitboxFisico(atacante, config)
+	local config = config or {}
+	local danio = config.danio or 25
+	local tamanio = config.tamanio or Vector3.new(5, 5, 5)
+	local offset = config.offset or Vector3.new(0, 0, -3)
+	local duracion = config.duracion or 0.4
+	local efecto = config.efecto
+	local duracionEfecto = config.duracionEfecto or 2
+	local color = config.color or BrickColor.Red()
+	local sonidoHit = config.sonidoHit
+
+	local char = atacante.Character
+	if not char then 
+		print("❌ [CombatManager] No se puede crear hitbox: atacante sin Character")
+		return nil 
+	end
+
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then 
+		print("❌ [CombatManager] No se puede crear hitbox: sin HumanoidRootPart")
+		return nil 
+	end
+
+	print("🎯 [CombatManager] Creando hitbox físico para:", char.Name)
+
+	-- Crear hitbox
+	local hitbox = Instance.new("Part")
+	hitbox.Name = "HitboxFisico_" .. char.Name
+	hitbox.CanCollide = false
+	hitbox.Size = tamanio
+	hitbox.Transparency = 0.9
+	hitbox.BrickColor = color
+	hitbox.Material = Enum.Material.Glass
+	hitbox.Anchored = true
+	hitbox.CFrame = hrp.CFrame * CFrame.new(offset)
+	hitbox.Parent = workspace
+
+	-- 🔥 DETECCIÓN CON TUS VALIDACIONES EXISTENTES
+	local conexion = hitbox.Touched:Connect(function(hit)
+		-- ✅ USAR TU SISTEMA EXISTENTE para identificar enemigos
+		local enemigo = CombatManager.IdentificarEnemigoDesdeParte(hit)
+
+		if enemigo then
+			-- ✅ VERIFICAR SI PUEDE ATACAR (usando tu sistema de equipos)
+			if EquipoManager.PuedeAtacar(atacante, enemigo) then
+				-- ✅ VERIFICAR SI EL OBJETIVO ES VULNERABLE
+				if not EstadoManager.TieneEstado(enemigo, "Invulnerable") then
+					-- ✅ USAR TU SISTEMA DE DAÑO con todas las validaciones
+					CombatManager.AplicarDanioSegura(atacante, enemigo, danio)
+
+					-- ✅ USAR TU ESTADOMANAGER para efectos
+					if efecto then
+						EstadoManager.AplicarEstado(enemigo, efecto, duracionEfecto)
+						print("🌀 [CombatManager] Efecto aplicado:", efecto, "a", enemigo.Name)
+					end
+
+					-- ✅ SONIDO (opcional)
+					if sonidoHit then
+						-- Tu lógica de sonidos aquí
+					end
+				else
+					print("🛡️ [CombatManager] Objetivo invulnerable, daño cancelado")
+				end
+			else
+				print("🚫 [CombatManager] No puede atacar (aliado o equipo)")
+			end
+		end
+	end)
+
+	-- Destrucción automática
+	delay(duracion, function()
+		if conexion then
+			conexion:Disconnect()
+		end
+		if hitbox and hitbox.Parent then
+			hitbox:Destroy()
+			print("🗑️ [CombatManager] Hitbox destruido después de", duracion, "segundos")
+		end
+	end)
+
+	return hitbox
+end
+
+-- 🎯 FUNCIONES DE CONVENIENCIA PARA DIFERENTES TIPOS DE ATAQUES
+function CombatManager.AtaqueConHitboxBasico(atacante, danio)
+	return CombatManager.CrearHitboxFisico(atacante, {
+		danio = danio,
+		tamanio = Vector3.new(5, 5, 5),
+		offset = Vector3.new(0, 0, -3),
+		color = BrickColor.Red()
+	})
+end
+
+function CombatManager.AtaqueConHitboxYStun(atacante, danio, duracionStun)
+	return CombatManager.CrearHitboxFisico(atacante, {
+		danio = danio,
+		efecto = "Aturdido",
+		duracionEfecto = duracionStun or 2,
+		tamanio = Vector3.new(5, 5, 5),
+		offset = Vector3.new(0, 0, -3),
+		color = BrickColor.Blue()
+	})
+end
+
+function CombatManager.AtaqueConHitboxYRalentizar(atacante, danio, factorRalentizar, duracion)
+	return CombatManager.CrearHitboxFisico(atacante, {
+		danio = danio,
+		efecto = "Ralentizado",
+		duracionEfecto = duracion or 3,
+		parametros = {factor = factorRalentizar or 0.5},
+		tamanio = Vector3.new(5, 5, 5),
+		offset = Vector3.new(0, 0, -3),
+		color = BrickColor.Yellow()
+	})
+end
+
+function CombatManager.AtaqueAreaConHitbox(atacante, danio, radio)
+	return CombatManager.CrearHitboxFisico(atacante, {
+		danio = danio,
+		tamanio = Vector3.new(radio * 2, 5, radio * 2),
+		offset = Vector3.new(0, 0, 0),
+		color = BrickColor.Green()
+	})
+end
+
+function CombatManager.AtaqueConoConHitbox(atacante, danio, distancia, angulo)
+	return CombatManager.CrearHitboxFisico(atacante, {
+		danio = danio,
+		tamanio = Vector3.new(5, 5, distancia),
+		offset = Vector3.new(0, 0, -distancia/2),
+		color = BrickColor.Orange()
+	})
+end
+
+-- 🚀 SISTEMA DE HITBOX RÁPIDO (Integrado con tu sistema de daño por Fuerza)
+function CombatManager.HitboxRapido(plr, dmg, aplicarStun)
+	print("⚡ [CombatManager] HitboxRápido activado para:", plr.Name, "Daño:", dmg)
+
+	local Char = plr.Character
+	if not Char then 
+		print("❌ [CombatManager] No hay character para HitboxRápido")
+		return 
+	end
+
+	local hrp = Char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Crear hitbox
+	local hitbox = Instance.new("Part")
+	hitbox.Name = "HitboxRapido"
+	hitbox.CanCollide = false
+	hitbox.Size = Vector3.new(5,5,5)
+	hitbox.Transparency = 0.9
+	hitbox.BrickColor = BrickColor.Red()
+	hitbox.Material = Enum.Material.Glass
+	hitbox.Anchored = true
+
+	-- Parent y posición (con el delay mínimo)
+	hitbox.Parent = Char
+	wait(0.0001)
+	hitbox.CFrame = hrp.CFrame * CFrame.new(0,0,-7.5) -- Más lejos que el hitbox básico
+
+	-- 🔥 DETECCIÓN MEJORADA CON TUS VALIDACIONES
+	local yaGolpeo = false
+	local conexion = hitbox.Touched:Connect(function(hit)
+		if yaGolpeo then return end
+
+		-- ✅ USAR TU SISTEMA DE IDENTIFICACIÓN
+		local enemigo = CombatManager.IdentificarEnemigoDesdeParte(hit)
+
+		if enemigo then
+			-- ✅ VERIFICAR SI PUEDE ATACAR
+			if EquipoManager.PuedeAtacar(plr, enemigo) then
+				-- ✅ VERIFICAR SI EL OBJETIVO ES VULNERABLE
+				if not EstadoManager.TieneEstado(enemigo, "Invulnerable") then
+					yaGolpeo = true
+
+					-- ✅ USAR TU SISTEMA DE DAÑO (que usa Fuerza automáticamente)
+					CombatManager.AplicarDanioSegura(plr, enemigo, dmg)
+
+					-- ✅ APLICAR STUN CON TU ESTADOMANAGER
+					if aplicarStun then
+						EstadoManager.AplicarEstado(enemigo, "Aturdido", 1)
+						print("🌀 [CombatManager] Stun aplicado con HitboxRápido")
+					end
+
+					-- ✅ SONIDO (si existe en tu sistema)
+					if game.ReplicatedStorage:FindFirstChild("Sounds") then
+						local hitSound = game.ReplicatedStorage.Sounds:FindFirstChild("Hit")
+						if hitSound then
+							hitSound:Play()
+						end
+					end
+
+					print("💥 [CombatManager] HitboxRápido golpeó a:", enemigo.Name, "con", dmg, "de daño")
+				else
+					print("🛡️ [CombatManager] Objetivo invulnerable - HitboxRápido")
+				end
+			else
+				print("🚫 [CombatManager] No puede atacar (aliado) - HitboxRápido")
+			end
+		end
+	end)
+
+	-- ✅ USAR DEBRIS PARA DESTRUCCIÓN AUTOMÁTICA
+	Debris:AddItem(hitbox, 0.1)
+
+	-- Limpiar conexión cuando se destruya el hitbox
+	delay(0.15, function()
+		if conexion then
+			conexion:Disconnect()
+		end
+	end)
+
+	return hitbox
+end
+
+-- 🎯 FUNCIONES ESPECIALIZADAS BASADAS EN HITBOX RÁPIDO
+function CombatManager.AtaqueRapidoConStun(plr, dmg)
+	return CombatManager.HitboxRapido(plr, dmg, true)
+end
+
+function CombatManager.AtaqueRapidoSinStun(plr, dmg)
+	return CombatManager.HitboxRapido(plr, dmg, false)
+end
+
+-- 🔄 COMPATIBILIDAD DIRECTA CON TU MÓDULO ORIGINAL
+function CombatManager.Hit(dmg, plr, valor)
+	-- Esta función mantiene compatibilidad con el código legacy
+	print("🔁 [CombatManager] Usando función Hit legacy")
+	CombatManager.HitboxRapido(plr, dmg, true)
+end
+
+-- 🆕 FUNCIONES ADICIONALES PARA MEJOR INTEGRACIÓN
+
+-- 🔄 Verificar si un personaje puede ser atacado (wrapper para EstadoManager)
+function CombatManager.PuedeSerAtacado(character)
+	if not character then return false end
+
+	-- Verificar si está invulnerable
+	if EstadoManager.TieneEstado(character, "Invulnerable") then
+		return false
+	end
+
+	-- Verificar si está muerto
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+
+	return true
+end
+
+-- 🎯 Ataque en área con hitbox rápido
+function CombatManager.AtaqueAreaRapido(plr, dmg, radio, aplicarStun)
+	print("🌀 [CombatManager] AtaqueAreaRapido activado para:", plr.Name)
+
+	local Char = plr.Character
+	if not Char then return end
+
+	local hrp = Char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Buscar todos los enemigos en el radio
+	local enemigos = CombatManager.BuscarEnemigosEnRadio(hrp.Position, radio, Char)
+
+	-- Aplicar daño a cada enemigo
+	for _, enemigo in ipairs(enemigos) do
+		if CombatManager.PuedeSerAtacado(enemigo) then
+			CombatManager.AplicarDanioSegura(plr, enemigo, dmg)
+
+			if aplicarStun then
+				EstadoManager.AplicarEstado(enemigo, "Aturdido", 1)
+			end
+
+			print("💥 Ataque área golpeó a:", enemigo.Name)
+		end
+	end
+
+	return #enemigos
+end
+
+-- 🆕 NUEVAS FUNCIONES PARA EL SISTEMA DE IMPACTO (INTEGRACIÓN SIN ELIMINAR NADA)
+
+-- 🎯 NUEVA FUNCIÓN: HitboxRapido con configuración de impacto
+function CombatManager.HitboxRapidoConImpacto(plr, dmg, configImpacto)
+	print("⚡ [CombatManager] HitboxRápidoConImpacto activado para:", plr.Name, "Daño:", dmg)
+
+	local Char = plr.Character
+	if not Char then return end
+
+	local hrp = Char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Crear hitbox
+	local hitbox = Instance.new("Part")
+	hitbox.Name = "HitboxRapidoImpacto"
+	hitbox.CanCollide = false
+	hitbox.Size = Vector3.new(5,5,5)
+	hitbox.Transparency = 0.9
+	hitbox.BrickColor = BrickColor.Red()
+	hitbox.Material = Enum.Material.Glass
+	hitbox.Anchored = true
+
+	hitbox.Parent = Char
+	wait(0.0001)
+	hitbox.CFrame = hrp.CFrame * CFrame.new(0,0,-7.5)
+
+	local yaGolpeo = false
+	local conexion = hitbox.Touched:Connect(function(hit)
+		if yaGolpeo then return end
+
+		local enemigo = CombatManager.IdentificarEnemigoDesdeParte(hit)
+
+		if enemigo then
+			if EquipoManager.PuedeAtacar(plr, enemigo) then
+				if not EstadoManager.TieneEstado(enemigo, "Invulnerable") then
+					yaGolpeo = true
+
+					CombatManager.AplicarDanioSegura(plr, enemigo, dmg)
+
+					-- 🆕 APLICAR IMPACTO EN LUGAR DE ATURDIDO
+					if configImpacto then
+						local KnockbackManager = require(game.ServerScriptService:WaitForChild("KnockbackManager"))
+						KnockbackManager.ProcesarImpacto(Char, enemigo, configImpacto)
+					end
+
+					print("💥 [CombatManager] HitboxRápidoConImpacto golpeó a:", enemigo.Name, "con", dmg, "de daño")
+				end
+			end
+		end
+	end)
+
+	Debris:AddItem(hitbox, 0.1)
+
+	delay(0.15, function()
+		if conexion then
+			conexion:Disconnect()
+		end
+	end)
+
+	return hitbox
+end
+
+-- 🆕 NUEVA FUNCIÓN: Ataque con impacto personalizado
+function CombatManager.AtaqueConImpacto(plr, dmg, configImpacto)
+	return CombatManager.HitboxRapidoConImpacto(plr, dmg, configImpacto)
+end
+
+-- 🔥 DEBUG: Mostrar información del módulo al cargar
+print("✅ [CombatManager] Módulo cargado completamente - Sistema listo")
+print("   🔥 Hitboxes físicos: ✅")
+print("   🚀 HitboxRapido: ✅") 
+print("   🎯 Ataques área: ✅")
+print("   🔄 Compatibilidad legacy: ✅")
+print("   ✨ Efectos visuales: ✅")
+print("   💥 Sistema de Impacto: ✅")
+
+return CombatManager
