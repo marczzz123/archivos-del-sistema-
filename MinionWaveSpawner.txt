@@ -1,0 +1,211 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local MinionAI = require(ReplicatedStorage:WaitForChild("MinionAI"))
+local TorreManager = require(game.ServerScriptService:WaitForChild("TorreManager"))
+
+local MINIONS_PER_LANE_PER_WAVE = 3
+local WAVE_INTERVAL = 30
+local MINION_SPAWN_DELAY = 1
+
+-- 🔥 INICIALIZAR TORRE MANAGER
+task.spawn(function()
+	task.wait(5) -- Esperar a que todo cargue
+	TorreManager.Init()
+end)
+
+-- EQUIPOS
+local EQUIPOS = {
+	{
+		nombre = "HijosDelVacio",
+		minionModel = "MinionHijos",
+		lanes = {"Bot", "Mid", "Top"}
+	},
+	{
+		nombre = "TemplariosDeLaLuz",
+		minionModel = "MinionTemplarios", 
+		lanes = {"Bot", "Mid", "Top"}
+	}
+}
+
+local activeMinions = {}
+
+local function getWaypoints(equipoNombre, laneName)
+	local equipoFolder = Workspace:FindFirstChild(equipoNombre)
+	if not equipoFolder then
+		warn("❌ No se encontró la carpeta del equipo:", equipoNombre)
+		return {}
+	end
+
+	local laneFolder = equipoFolder:FindFirstChild(laneName)
+	if not laneFolder then
+		warn("❌ No se encontró la carpeta de lane:", laneName, "en el equipo", equipoNombre)
+		return {}
+	end
+
+	local parts = {}
+	for _, part in ipairs(laneFolder:GetChildren()) do
+		if part:IsA("BasePart") then
+			table.insert(parts, part)
+		end
+	end
+
+	table.sort(parts, function(a, b)
+		local numA = tonumber(a.Name:match("%d+")) or 0
+		local numB = tonumber(b.Name:match("%d+")) or 0
+		return numA < numB
+	end)
+
+	print("📍 " .. equipoNombre .. " - " .. laneName .. ": " .. #parts .. " waypoints encontrados")
+
+	return parts
+end
+
+local function getMinionTemplate(modelName)
+	local folder = ReplicatedStorage:FindFirstChild("Minions")
+	if not folder then
+		warn("❌ Falta la carpeta Minions en ReplicatedStorage")
+		return nil
+	end
+	return folder:FindFirstChild(modelName)
+end
+
+local function onMinionReachedWaypoint(minionName, waypointName, waypointIndex, totalWaypoints)
+	print("🎯 " .. minionName .. " llegó a " .. waypointName .. " (" .. waypointIndex .. "/" .. totalWaypoints .. ")")
+
+	if waypointIndex == totalWaypoints then
+		print("🏁 " .. minionName .. " COMPLETÓ SU RUTA!")
+		activeMinions[minionName] = nil
+	end
+end
+
+local function onMinionDestroyed(minionName)
+	print("💀 " .. minionName .. " fue eliminado")
+	activeMinions[minionName] = nil
+end
+
+local function spawnMinion(modelName, equipoNombre, laneName, waypoints)
+	local template = getMinionTemplate(modelName)
+	if not template then return nil end
+
+	local minion = template:Clone()
+	local minionName = equipoNombre .. "_" .. laneName .. "_Minion_" .. math.random(1000, 9999)
+	minion.Name = minionName
+
+	local root = minion:FindFirstChild("HumanoidRootPart")
+	if root and waypoints[1] then
+		minion:PivotTo(waypoints[1].CFrame + Vector3.new(math.random(-3, 3), 2, math.random(-3, 3)))
+	end
+
+	-- 🔥 ATRIBUTOS PARA AI
+	minion:SetAttribute("Equipo", equipoNombre)
+	minion:SetAttribute("Lane", laneName)
+	minion:SetAttribute("IsMinion", true)
+	minion:SetAttribute("AIStarted", false)
+
+	-- 🔥 CONFIGURAR STATS BASE
+	local humanoid = minion:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local statsBase = {
+			danio = 10,
+			vida = 100
+		}
+
+		minion:SetAttribute("DanioBase", statsBase.danio)
+		minion:SetAttribute("VidaBase", statsBase.vida)
+
+		-- 🔥 VERIFICAR Y APLICAR BONIFICACIÓN SOLO SI ESTÁ ACTIVA
+		if TorreManager.EstaLaneConBonificacion(equipoNombre, laneName) then
+			TorreManager.AplicarBonificacionSiCorresponde(minion)
+			print("🎯 NUEVO Minion con bonificación: " .. minionName)
+		else
+			-- Stats normales
+			humanoid.MaxHealth = statsBase.vida
+			humanoid.Health = statsBase.vida
+			minion:SetAttribute("Danio", statsBase.danio)
+			minion:SetAttribute("TieneBonificacion", false)
+		end
+	end
+
+	-- Guardar waypoints
+	local wpFolder = Instance.new("Folder")
+	wpFolder.Name = "AssignedWaypoints"
+	for i, wp in ipairs(waypoints) do
+		local obj = Instance.new("ObjectValue")
+		obj.Name = "WP" .. i
+		obj.Value = wp
+		obj.Parent = wpFolder
+	end
+	wpFolder.Parent = minion
+
+	-- Parentear al Workspace
+	minion.Parent = Workspace
+
+	-- Registrar minion activo
+	activeMinions[minionName] = {
+		equipo = equipoNombre,
+		lane = laneName,
+		spawnTime = os.time(),
+		waypoints = #waypoints,
+		tieneBonificacion = minion:GetAttribute("TieneBonificacion") or false
+	}
+
+	print("👶 SPAWNEADO: " .. minionName .. " en " .. laneName .. 
+		(minion:GetAttribute("TieneBonificacion") and " 🎯 CON BONIFICACIÓN" or ""))
+
+	-- Conectar eventos de destrucción
+	minion.Destroying:Connect(function()
+		activeMinions[minionName] = nil
+	end)
+
+	return minion
+end
+
+-- Ciclo de oleadas
+task.spawn(function()
+	local wave = 0
+
+	print("⏰ Primera oleada en 30 segundos...")
+	task.wait(30)
+
+	while true do
+		wave += 1
+		print("\n🌊=== INICIANDO OLEADA " .. wave .. " ===🌊")
+
+		for _, equipo in ipairs(EQUIPOS) do
+			for _, lane in ipairs(equipo.lanes) do
+				local waypoints = getWaypoints(equipo.nombre, lane)
+
+				if #waypoints >= 2 then
+					for i = 1, MINIONS_PER_LANE_PER_WAVE do
+						spawnMinion(equipo.minionModel, equipo.nombre, lane, waypoints)
+						task.wait(MINION_SPAWN_DELAY)
+					end
+					print("✅ " .. equipo.nombre .. " - " .. lane .. ": " .. MINIONS_PER_LANE_PER_WAVE .. " minion(s)")
+				else
+					warn("⚠️ Waypoints insuficientes para:", equipo.nombre, lane, "(se necesitan al menos 2, hay " .. #waypoints .. ")")
+				end
+			end
+		end
+
+		print("⏳ Próxima oleada en " .. WAVE_INTERVAL .. " segundos...")
+		task.wait(WAVE_INTERVAL)
+	end
+end)
+
+-- 🔥 AGREGAR COMANDOS DE DEBUG PARA TORRES
+game.Players.PlayerAdded:Connect(function(player)
+	player.Chatted:Connect(function(message)
+		if message:lower() == "/torres" then
+			TorreManager.DebugInfo()
+		elseif message:lower() == "/minionstats" then
+			print("\n=== 📊 ESTADO DE MINIONS ===")
+			for minionName, data in pairs(activeMinions) do
+				print("   " .. minionName .. " - " .. data.equipo .. " - " .. data.lane ..
+					(data.tieneBonificacion and " 🎯 CON BONO" or " ⚡ NORMAL"))
+			end
+		end
+	end)
+end)
+
+print("✅ MinionWaveSpawner iniciado correctamente")
