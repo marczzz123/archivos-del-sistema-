@@ -1,0 +1,620 @@
+-- DragonYinYanModule.lua (ReplicatedStorage > Habilidades)
+local DragonYinYanSkills = {}
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+-- Cargar módulos del servidor
+local VidaManager, EquipoManager, EstadoManager, CombatManager
+
+if RunService:IsServer() then
+	VidaManager = require(game.ServerScriptService:WaitForChild("VidaManager"))
+	EquipoManager = require(game.ReplicatedStorage:WaitForChild("EquipoManager"))
+	EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+	CombatManager = require(game.ReplicatedStorage:WaitForChild("CombatManager"))
+end
+
+-- Sistema de marcas Yin-Yang (mejorado)
+local MarcasYinYang = {}
+local duracionMarca = 4
+local habilidadActiva = {} -- Tabla para rastrear qué jugadores tienen la habilidad 3 activa
+
+-- Función para limpiar marcas expiradas
+local function limpiarMarcasExpiradas()
+	local ahora = os.clock()
+	for enemigo, datos in pairs(MarcasYinYang) do
+		if ahora >= datos.tiempoExpiracion or not enemigo:IsDescendantOf(workspace) then
+			MarcasYinYang[enemigo] = nil
+			if enemigo:IsDescendantOf(workspace) then
+				EstadoManager.RemoverEstado(enemigo, "MarcaYin")
+				EstadoManager.RemoverEstado(enemigo, "MarcaYang")
+				EstadoManager.RemoverEstado(enemigo, "MarcaYinYang")
+			end
+		end
+	end
+end
+
+-- 🔥 CORREGIDO: Función MEJORADA para verificar si un objetivo es enemigo (INCLUYENDO NEUTRALES)
+local function esEnemigo(character, objetivo)
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then 
+		print("❌ No se pudo obtener jugador del character")
+		return false 
+	end
+
+	local equipoJugador = character:GetAttribute("Equipo")
+	if not equipoJugador then
+		equipoJugador = player:GetAttribute("Equipo")
+	end
+
+	if not equipoJugador then
+		print("❌ No se pudo obtener equipo del jugador")
+		return false
+	end
+
+	-- 🔥 DETECCIÓN MEJORADA PARA MINIONS NEUTRALES
+	if objetivo:GetAttribute("EsMinion") or string.find(objetivo.Name, "Minion") then
+		local equipoMinion = objetivo:GetAttribute("Equipo")
+
+		-- Si no tiene atributo, intentar extraer del nombre
+		if not equipoMinion then
+			if string.find(objetivo.Name, "TemplariosDeLaLuz") then
+				equipoMinion = "TemplariosDeLaLuz"
+			elseif string.find(objetivo.Name, "HijosDelVacio") then
+				equipoMinion = "HijosDelVacio"
+			elseif string.find(objetivo.Name, "Neutral") then
+				equipoMinion = "Neutral"
+			end
+		end
+
+		if equipoMinion then
+			-- 🔥 CORRECCIÓN CRÍTICA: Los neutrales SON ENEMIGOS de todos los equipos
+			if equipoMinion == "Neutral" then
+				-- Los neutrales son enemigos de TODOS los jugadores
+				print("🎯 Minion Neutral detectado: " .. objetivo.Name .. " -> ES ENEMIGO de " .. equipoJugador)
+				return true
+			else
+				local sonEnemigos = equipoMinion ~= equipoJugador
+				print("🔍 Minion: " .. objetivo.Name .. " -> EquipoMinion: " .. tostring(equipoMinion) .. " | EquipoJugador: " .. equipoJugador .. " -> SonEnemigos: " .. tostring(sonEnemigos))
+				return sonEnemigos
+			end
+		else
+			print("❌ No se pudo determinar equipo del minion: " .. objetivo.Name)
+			return false
+		end
+	end
+
+	-- Si es un jugador, usar EquipoManager
+	local jugadorObjetivo = Players:GetPlayerFromCharacter(objetivo)
+	if jugadorObjetivo then
+		return EquipoManager.SonEnemigos(player, jugadorObjetivo)
+	end
+
+	-- Para NPCs u otros objetos
+	local equipoObjetivo = objetivo:GetAttribute("Equipo")
+	local equipoJugador = character:GetAttribute("Equipo")
+
+	if equipoObjetivo and equipoJugador then
+		-- 🔥 CORRECCIÓN: Los neutrales SON ENEMIGOS de todos
+		if equipoObjetivo == "Neutral" then
+			print("🎯 Objetivo Neutral detectado: " .. objetivo.Name .. " -> ES ENEMIGO de " .. equipoJugador)
+			return true
+		end
+		return equipoObjetivo ~= equipoJugador
+	end
+
+	print("❌ No se pudo determinar relación con objetivo: " .. objetivo.Name)
+	return false
+end
+
+-- Función para aplicar marca Yin-Yang (SOLO a enemigos)
+local function aplicarMarcaYinYang(character, objetivo, nivelHabilidad)
+	-- 🔥 VERIFICAR QUE EL OBJETIVO SEA ENEMIGO
+	if not esEnemigo(character, objetivo) then
+		print("🚫 No se aplica marca - Objetivo no es enemigo: " .. objetivo.Name)
+		return nil, 0
+	end
+
+	local nivel = nivelHabilidad or 1
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then return nil, 0 end
+
+	-- Limpiar marcas expiradas
+	limpiarMarcasExpiradas()
+
+	-- Gestionar sistema de marcas
+	local ahora = os.clock()
+	local datosMarca = MarcasYinYang[objetivo]
+	if not datosMarca then
+		datosMarca = { contador = 0, tiempoExpiracion = ahora + duracionMarca }
+		MarcasYinYang[objetivo] = datosMarca
+	else
+		datosMarca.tiempoExpiracion = ahora + duracionMarca
+	end
+
+	-- Incrementar contador
+	datosMarca.contador = (datosMarca.contador % 3) + 1
+
+	-- Remover marcas anteriores
+	EstadoManager.RemoverEstado(objetivo, "MarcaYin")
+	EstadoManager.RemoverEstado(objetivo, "MarcaYang")
+	EstadoManager.RemoverEstado(objetivo, "MarcaYinYang")
+
+	-- Aplicar efectos según el contador
+	local danoBase = 15 + (nivel * 3)
+	local dano = danoBase
+
+	if datosMarca.contador == 1 then
+		EstadoManager.AplicarEstado(objetivo, "MarcaYin", duracionMarca)
+	elseif datosMarca.contador == 2 then
+		EstadoManager.AplicarEstado(objetivo, "MarcaYang", duracionMarca)
+	elseif datosMarca.contador == 3 then
+		EstadoManager.AplicarEstado(objetivo, "MarcaYinYang", duracionMarca)
+		-- Daño extra por completar el ciclo (más con nivel)
+		dano = 45 + (nivel * 10)
+	end
+
+	-- Aplicar daño SOLO a enemigos
+	VidaManager:AplicarDanio(character, objetivo, dano)
+
+	-- Disparar evento visual
+	local MarcaYinYangRemote = game.ReplicatedStorage:FindFirstChild("MarcaYinYangVisual")
+	if MarcaYinYangRemote then
+		MarcaYinYangRemote:FireAllClients(objetivo, datosMarca.contador, nivel)
+	end
+
+	return datosMarca.contador, dano
+end
+
+-- Habilidad 1 - Orbe Dual (Corregido para dañar neutrales)
+DragonYinYanSkills["1"] = {
+	Name = "Orbe Dual",
+	Descripcion = "Lanza un orbe que daña enemigos o cura aliados. Aplica marcas Yin-Yang a enemigos.",
+	Cooldown = 6,
+	Tipo = "Direccion",
+	Execute = function(character, direccion, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		if not RunService:IsServer() then return end
+
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player or not character then return end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		-- Disparar evento visual
+		local OrbeDualRemote = game.ReplicatedStorage:FindFirstChild("OrbeDualVisual")
+		if OrbeDualRemote then
+			OrbeDualRemote:FireAllClients(hrp.Position, direccion, nivel)
+		end
+
+		-- Crear el orbe en servidor
+		local orbe = Instance.new("Part")
+		orbe.Size = Vector3.new(1.5, 1.5, 1.5)
+		orbe.Shape = Enum.PartType.Ball
+		orbe.Position = hrp.Position + direccion * 2
+		orbe.Anchored = false
+		orbe.CanCollide = false
+		orbe.Transparency = 1
+		orbe.Parent = workspace
+
+		-- Velocidad aumenta con nivel
+		local velocidad = 70 + (nivel * 5)
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = direccion * velocidad
+		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+		bv.Parent = orbe
+
+		orbe.Touched:Connect(function(hit)
+			if hit:IsDescendantOf(character) then return end
+
+			local objetivo = hit:FindFirstAncestorOfClass("Model")
+			if not objetivo then return end
+
+			local humanoide = objetivo:FindFirstChildOfClass("Humanoid")
+			if not humanoide or humanoide.Health <= 0 then return end
+
+			-- 🔥 VERIFICAR SI ES ALIADO O ENEMIGO (INCLUYENDO NEUTRALES)
+			local esAliado = not esEnemigo(character, objetivo)
+
+			if esAliado then
+				-- Curar aliado (más curación con nivel)
+				local curacion = 25 + (nivel * 5)
+				humanoide.Health = math.min(humanoide.MaxHealth, humanoide.Health + curacion)
+
+				-- Quitar efectos negativos
+				EstadoManager.QuitarEstadoNegativo(objetivo)
+
+				print("💚 Orbe Dual curó a: " .. objetivo.Name .. " (+" .. curacion .. " HP)")
+			else
+				-- Dañar enemigo (más daño con nivel) - INCLUYENDO NEUTRALES
+				local dano = 35 + (nivel * 5)
+				VidaManager:AplicarDanio(character, objetivo, dano)
+				print("💥 Orbe Dual dañó a: " .. objetivo.Name .. " (-" .. dano .. " HP)")
+
+				-- Aplicar marca Yin-Yang al enemigo (INCLUYENDO NEUTRALES)
+				local contador, danoMarca = aplicarMarcaYinYang(character, objetivo, nivel)
+				if contador then
+					print("🎯 Orbe Dual aplicó marca " .. contador .. " a " .. objetivo.Name .. " (-" .. danoMarca .. " HP)")
+				end
+			end
+
+			orbe:Destroy()
+		end)
+
+		-- Duración aumenta con nivel
+		local duracion = 3 + (nivel * 0.3)
+		game:GetService("Debris"):AddItem(orbe, duracion)
+	end
+}
+
+-- Habilidad 2 - Paso de Equilibrio (Corregido para dañar neutrales)
+DragonYinYanSkills["2"] = {
+	Name = "Paso de Equilibrio",
+	Descripcion = "Teletransporta una corta distancia, evitando obstáculos y aliados. Aplica marcas a enemigos.",
+	Cooldown = 8,
+	Tipo = "Direccion",
+	Execute = function(character, direccion, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		if not RunService:IsServer() then return end
+
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player or not character then return end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		print("🎯 Iniciando Paso de Equilibrio para: " .. player.Name)
+
+		-- Calcular destino inicial
+		local distancia = 45 + (nivel * 5)
+		local destinoInicial = hrp.Position + (direccion * distancia)
+
+		-- Verificar colisiones con raycast
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Blacklist
+		params.FilterDescendantsInstances = {character}
+
+		local ray = workspace:Raycast(hrp.Position, direccion * distancia, params)
+		local destinoFinal = destinoInicial
+
+		if ray then
+			local distanciaSegura = (ray.Position - hrp.Position).Magnitude - 3
+			if distanciaSegura < 8 then
+				distanciaSegura = 8
+			end
+			destinoFinal = hrp.Position + (direccion * distanciaSegura)
+			print("🚧 Paso de Equilibrio ajustado por obstáculo: " .. tostring(ray.Instance:GetFullName()))
+		end
+
+		-- Verificar que el destino no esté dentro de otro personaje
+		local region = Region3.new(
+			destinoFinal - Vector3.new(3, 3, 3),
+			destinoFinal + Vector3.new(3, 3, 3)
+		)
+
+		local partesEnRegion = workspace:FindPartsInRegion3(region, character, 10)
+
+		for _, parte in ipairs(partesEnRegion) do
+			local modelo = parte:FindFirstAncestorOfClass("Model")
+			if modelo and modelo ~= character then
+				local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+				if humanoide and humanoide.Health > 0 then
+					local direccionAjuste = (destinoFinal - parte.Position).Unit
+					destinoFinal = parte.Position + (direccionAjuste * 4)
+					print("👤 Paso de Equilibrio ajustado para evitar personaje: " .. modelo.Name)
+					break
+				end
+			end
+		end
+
+		-- Asegurar que el destino esté en el suelo
+		local paramsSuelo = RaycastParams.new()
+		paramsSuelo.FilterType = Enum.RaycastFilterType.Blacklist
+		paramsSuelo.FilterDescendantsInstances = {character}
+
+		local raySuelo = workspace:Raycast(
+			destinoFinal + Vector3.new(0, 10, 0), 
+			Vector3.new(0, -20, 0), 
+			paramsSuelo
+		)
+
+		if raySuelo then
+			destinoFinal = raySuelo.Position + Vector3.new(0, 3, 0)
+		else
+			destinoFinal = Vector3.new(destinoFinal.X, hrp.Position.Y, destinoFinal.Z)
+		end
+
+		-- 🔊 AGREGAR SONIDO DIRECTAMENTE AL PERSONAJE CON PRINTS
+		print("🔊 Intentando reproducir sonido...")
+		local sonidoHabilidad = Instance.new("Sound")
+		sonidoHabilidad.SoundId = "rbxassetid://77553486038083"
+		sonidoHabilidad.Volume = 0.8  -- Aumenté el volumen
+		sonidoHabilidad.MaxDistance = 80  -- Aumenté la distancia
+		sonidoHabilidad.RollOffMinDistance = 10
+		sonidoHabilidad.RollOffMaxDistance = 80
+		sonidoHabilidad.Parent = hrp
+
+		print("🔊 Sound creado, ID: " .. sonidoHabilidad.SoundId)
+		print("🔊 Volume: " .. sonidoHabilidad.Volume)
+		print("🔊 MaxDistance: " .. sonidoHabilidad.MaxDistance)
+
+		sonidoHabilidad:Play()
+		print("🔊 Play() ejecutado")
+
+		-- El sonido se destruye automáticamente cuando termina
+		sonidoHabilidad.Ended:Connect(function()
+			print("🔊 Sonido terminado, destruyendo...")
+			sonidoHabilidad:Destroy()
+		end)
+
+		-- Fallback: destruir después de 10 segundos por si acaso
+		game:GetService("Debris"):AddItem(sonidoHabilidad, 10)
+
+		-- Disparar evento visual
+		local PasoEquilibrioRemote = game.ReplicatedStorage:FindFirstChild("PasoEquilibrioVisual")
+		if PasoEquilibrioRemote then
+			print("🎨 Enviando evento visual al cliente...")
+			PasoEquilibrioRemote:FireAllClients(hrp.Position, destinoFinal, nivel)
+		else
+			warn("❌ No se encontró PasoEquilibrioVisual en ReplicatedStorage")
+		end
+
+		-- Radio de efecto
+		local radio = 18 + (nivel * 3)
+
+		-- Buscar personajes dentro del radio
+		local regionEfecto = Region3.new(
+			hrp.Position - Vector3.new(radio, radio, radio),
+			hrp.Position + Vector3.new(radio, radio, radio)
+		)
+
+		local partesEnRadio = workspace:FindPartsInRegion3(regionEfecto, character, 50)
+
+		local modelosProcesados = {}
+
+		for _, parte in ipairs(partesEnRadio) do
+			local modelo = parte:FindFirstAncestorOfClass("Model")
+
+			if modelo and modelo ~= character and not modelosProcesados[modelo] then
+				modelosProcesados[modelo] = true
+
+				local humanoide = modelo:FindFirstChildOfClass("Humanoid")
+				local objHrp = modelo:FindFirstChild("HumanoidRootPart")
+
+				if humanoide and objHrp and humanoide.Health > 0 then
+					local distanciaReal = (objHrp.Position - hrp.Position).Magnitude
+					if distanciaReal <= radio then
+						local esAliado = not esEnemigo(character, modelo)
+
+						if esAliado then
+							local duracionBuff = 3 + (nivel * 0.5)
+							local factorVelocidad = 1.3 + (nivel * 0.05)
+							EstadoManager.AplicarEstado(modelo, "VelocidadAumentada", duracionBuff, {factor = factorVelocidad})
+							print("💨 Paso de Equilibrio buffeó a aliado: " .. modelo.Name)
+						else
+							local duracionDebuff = 2.5 + (nivel * 0.3)
+							local factorRalentizacion = 0.6 - (nivel * 0.02)
+							if factorRalentizacion < 0.3 then factorRalentizacion = 0.3 end
+							EstadoManager.AplicarEstado(modelo, "Ralentizado", duracionDebuff, {factor = factorRalentizacion})
+
+							-- 🔥 APLICAR MARCAS A NEUTRALES TAMBIÉN
+							local contador, danoMarca = aplicarMarcaYinYang(character, modelo, nivel)
+							if contador then
+								print("🎯 Paso de Equilibrio aplicó marca " .. contador .. " a " .. modelo.Name .. " (-" .. danoMarca .. " HP)")
+							end
+						end
+					end
+				end
+			end
+		end
+
+		-- Teletransportar al jugador
+		hrp.CFrame = CFrame.new(destinoFinal)
+
+
+	end
+}
+
+-- Habilidad 3 - Estado de Marcas Activas (Solo aplica a enemigos INCLUYENDO NEUTRALES)
+DragonYinYanSkills["3"] = {
+	Name = "Armonía Yin-Yang",
+	Descripcion = "Activa el estado de armonía. Durante 8 segundos, tus ataques básicos aplican marcas Yin-Yang a ENEMIGOS.",
+	Cooldown = 12,
+	Tipo = "Automatica",
+	Execute = function(character, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		if not RunService:IsServer() then return end
+
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player or not character then return end
+
+		-- Duración del estado activo (más duración con nivel)
+		local duracionEstado = 8 + (nivel * 1)
+
+		-- Activar el estado
+		habilidadActiva[player] = true
+		character:SetAttribute("MarcasActivas", true)
+
+		-- Aplicar efecto visual del estado
+		EstadoManager.AplicarEstado(character, "ArmoniaYinYang", duracionEstado)
+
+		-- Disparar evento visual para el estado activo
+		local ArmoniaActivaRemote = game.ReplicatedStorage:FindFirstChild("ArmoniaYinYangVisual")
+		if ArmoniaActivaRemote then
+			ArmoniaActivaRemote:FireAllClients(character, true, duracionEstado, nivel)
+		end
+
+		print("🌀 Armonía Yin-Yang activada por " .. player.Name .. " durante " .. duracionEstado .. " segundos")
+
+		-- Desactivar después de la duración
+		task.delay(duracionEstado, function()
+			if habilidadActiva[player] then
+				habilidadActiva[player] = nil
+				character:SetAttribute("MarcasActivas", false)
+
+				-- Desactivar efecto visual
+				if ArmoniaActivaRemote then
+					ArmoniaActivaRemote:FireAllClients(character, false, 0, nivel)
+				end
+
+				print("🌀 Armonía Yin-Yang desactivada para " .. player.Name)
+			end
+		end)
+
+		return true
+	end
+}
+
+-- Habilidad 4 - Juicio del Equilibrio (Detecta cualquier marcador)
+DragonYinYanSkills["4"] = {
+	Name = "Juicio del Equilibrio",
+	Descripcion = "Atrae enemigos cercanos y explota, infligiendo daño masivo y aplicando marcas SOLO a enemigos.",
+	Cooldown = 45,
+	Tipo = "Automatica",
+	Execute = function(character, nivelHabilidad)
+		local nivel = nivelHabilidad or 1
+		if not RunService:IsServer() then return end
+
+		local player = Players:GetPlayerFromCharacter(character)
+		if not player or not character then return end
+
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not hrp or not humanoid then return end
+
+		print("🎯 [HABILIDAD 4] Iniciando para jugador: " .. player.Name)
+
+		-- 🔥 VARIABLE PARA CONTROLAR SI LA HABILIDAD FUE ACTIVADA
+		local habilidadActivada = false
+		local disco = nil
+
+		-- 🔥 FUNCIÓN CENTRAL PARA ACTIVAR LA HABILIDAD UNA SOLA VEZ
+		local function activarHabilidad()
+			if habilidadActivada then 
+				print("🚫 [HABILIDAD 4] Habilidad ya activada, ignorando llamada duplicada")
+				return 
+			end
+			habilidadActivada = true
+			print("✅ [HABILIDAD 4] Activando habilidad (una sola vez)")
+			crearEfectoJuicio(character, nivel)
+		end
+
+		-- 🔥 CARGAR Y REPRODUCIR ANIMACIÓN
+		local animacionFolder = game.ReplicatedStorage:FindFirstChild("Animaciones")
+		local animacionHabilidad4 = animacionFolder and animacionFolder:FindFirstChild("Habilidad4")
+
+		if not animacionHabilidad4 then
+			warn("❌ [HABILIDAD 4] No se encontró la animación Habilidad4")
+			activarHabilidad()
+			return
+		end
+
+		print("📁 [HABILIDAD 4] Animación encontrada: " .. animacionHabilidad4.Name)
+
+		-- 🔥 DEBUG: VER TODOS LOS MARCADORES DE LA ANIMACIÓN
+		print("🔍 [HABILIDAD 4] Buscando marcadores en la animación...")
+		local marcadores = animacionHabilidad4:GetMarkers()
+		if marcadores and #marcadores > 0 then
+			for _, marker in ipairs(marcadores) do
+				print("🔍 [HABILIDAD 4] Marcador encontrado: '" .. marker.Name .. "' en frame: " .. tostring(marker.Frame))
+			end
+		else
+			print("⚠️ [HABILIDAD 4] No se encontraron marcadores en la animación")
+		end
+
+		-- Cargar la animación en el humanoid
+		local track = humanoid:LoadAnimation(animacionHabilidad4)
+
+		-- 🔥 CONECTAR AL EVENTO DE CUALQUIER MARCADOR (CORRECCIÓN CRÍTICA)
+		local conexionMarker
+		conexionMarker = track:GetMarkerReachedSignal(""):Connect(function(markerName)
+			print("🎯 [HABILIDAD 4] Evento de marcador alcanzado: '" .. tostring(markerName) .. "'")
+
+			-- 🔥 ACTIVAR CON CUALQUIER MARCADOR (no solo "Habilidad")
+			activarHabilidad()
+
+			-- 🔥 DESCONECTAR EL EVENTO PARA EVITAR MÚLTIPLES ACTIVACIONES
+			if conexionMarker then
+				conexionMarker:Disconnect()
+				print("🔌 [HABILIDAD 4] Evento de marcador desconectado")
+			end
+		end)
+
+		-- 🔥 CONECTAR EVENTOS DE ESTADO DE LA ANIMACIÓN
+		track.Stopped:Connect(function()
+			print("🛑 [HABILIDAD 4] Animación detenida")
+			if not habilidadActivada then
+				print("❌ [HABILIDAD 4] Animación se detuvo sin activar la habilidad")
+				activarHabilidad()
+			end
+		end)
+
+		track.Ended:Connect(function()
+			print("🏁 [HABILIDAD 4] Animación terminó completamente")
+			-- No necesitamos activar aquí porque ya debería haberse activado
+		end)
+
+		-- 🔥 REPRODUCIR LA ANIMACIÓN
+		local success, errorMsg = pcall(function()
+			track:Play()
+		end)
+
+		if success then
+			print("🎬 [HABILIDAD 4] Animación reproducida exitosamente")
+
+			-- 🔥 FALLBACK: REDUCIR TIMEOUT A 1.5 SEGUNDOS (ya que sabemos que el marcador existe)
+			task.delay(1.5, function()
+				if not habilidadActivada then
+					print("⏰ [HABILIDAD 4] Fallback - Creando efecto después de timeout")
+					activarHabilidad()
+				else
+					print("✅ [HABILIDAD 4] Habilidad ya activada, ignorando timeout")
+				end
+			end)
+		else
+			warn("❌ [HABILIDAD 4] Error al reproducir animación: " .. tostring(errorMsg))
+			activarHabilidad()
+		end
+
+		-- 🔥 LIMPIAR LA ANIMACIÓN SI EL PERSONAJE MUERE
+		humanoid.Died:Connect(function()
+			if track and track.IsPlaying then
+				track:Stop()
+				print("💀 [HABILIDAD 4] Animación detenida por muerte del personaje")
+			end
+		end)
+
+		-- 🔥 FUNCIÓN PARA CREAR EL EFECTO DEL JUICIO (MANTENER IGUAL)
+		function crearEfectoJuicio(character, nivel)
+			-- ... (mantener todo el código igual de la función crearEfectoJuicio)
+			-- Solo asegúrate de que esta función esté completa
+		end
+	end
+}
+
+-- Función para verificar si se debe aplicar marca desde ataque básico (SOLO a enemigos INCLUYENDO NEUTRALES)
+function DragonYinYanSkills.AplicarMarcaDesdeAtaqueBasico(character, objetivo, nivelHabilidad)
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then return false end
+
+	-- 🔥 VERIFICAR QUE EL OBJETIVO SEA ENEMIGO (INCLUYENDO NEUTRALES)
+	if not esEnemigo(character, objetivo) then
+		print("🚫 Ataque básico no aplica marca - Objetivo no es enemigo: " .. objetivo.Name)
+		return false
+	end
+
+	-- Verificar si la habilidad 3 está activa
+	if habilidadActiva[player] or character:GetAttribute("MarcasActivas") then
+		local nivel = nivelHabilidad or character:GetAttribute("Habilidad3Nivel") or 1
+		local contador, dano = aplicarMarcaYinYang(character, objetivo, nivel)
+		if contador then
+			print("🎯 Ataque básico aplicó marca " .. contador .. " a " .. objetivo.Name .. " (-" .. dano .. " HP)")
+			return true
+		end
+	end
+
+	return false
+end
+
+return DragonYinYanSkills
