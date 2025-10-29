@@ -1,0 +1,689 @@
+local MinionAI = {}
+local EquipoManager = require(game.ReplicatedStorage:WaitForChild("EquipoManager"))
+local VidaManager = require(game.ServerScriptService:WaitForChild("VidaManager"))
+local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
+local TweenService = game:GetService("TweenService")
+
+-- Cargar MinionAnimations de ReplicatedStorage
+local MinionAnimations
+local success, err = pcall(function()
+	MinionAnimations = require(game.ReplicatedStorage:WaitForChild("MinionAnimations"))
+end)
+
+if not success then
+	warn("❌ MinionAI: No se pudo cargar MinionAnimations: " .. tostring(err))
+	MinionAnimations = nil
+else
+	print("✅ MinionAI: MinionAnimations cargado correctamente")
+end
+
+-- 🎯 CONFIGURACIÓN GENERAL
+local DETECTION_RANGE = 30
+local ATTACK_RANGE = 10
+local ATTACK_COOLDOWN = 1.5
+local DAMAGE = 10
+local LANE_COMMITMENT_DISTANCE = 80
+local BASE_WAYPOINT_THRESHOLD = 3
+
+-- 🎯 MOVIMIENTO
+local MAX_WAYPOINT_DISTANCE = 1000
+local WAYPOINT_TOLERANCE = 8
+local STUCK_TIME_THRESHOLD = 10
+local MIN_MOVEMENT_THRESHOLD = 3
+
+-- 🔥 CORREGIDO: Tabla global para almacenar animaciones
+local minionsAnimations = {}
+
+-- 🚫 NUEVA FUNCIÓN: Verificar si el minion puede actuar
+local function MinionPuedeActuar(minion)
+	return not EstadoManager.TieneEstado(minion, "Aturdido") and 
+		not EstadoManager.TieneEstado(minion, "Inmovilizado")
+end
+
+-- 🚫 NUEVA FUNCIÓN: Verificar si el minion puede atacar
+local function MinionPuedeAtacar(minion)
+	return not EstadoManager.TieneEstado(minion, "Aturdido") and 
+		not EstadoManager.TieneEstado(minion, "BloqueadoAtaque")
+end
+
+local function GetRoot(model)
+	return model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart")
+end
+
+function MinionAI.GetWaypoints(minion)
+	local folder = minion:FindFirstChild("AssignedWaypoints")
+	if not folder then return {} end
+
+	local waypoints = {}
+	for _, obj in ipairs(folder:GetChildren()) do
+		if obj:IsA("ObjectValue") and obj.Value then
+			table.insert(waypoints, obj.Value)
+		end
+	end
+
+	table.sort(waypoints, function(a, b)
+		local numA = tonumber(a.Name:match("%d+")) or 0
+		local numB = tonumber(b.Name:match("%d+")) or 0
+		return numA < numB
+	end)
+
+	return waypoints
+end
+
+-- 🔥 DETECCIÓN GENERAL - ACTUALIZADA PARA NEUTRALES
+function MinionAI.FindNearestEnemy(minion, currentWaypointPosition, isNearBase)
+	-- 🚫 SI EL MINION ESTÁ ATURDIDO, NO BUSCAR ENEMIGOS
+	if not MinionPuedeActuar(minion) then
+		return nil
+	end
+
+	local myRoot = GetRoot(minion)
+	if not myRoot then return nil end
+
+	local closest, closestDist = nil, math.huge
+	local myPosition = myRoot.Position
+	local myTeam = EquipoManager.ObtenerEquipo(minion)
+	local isNeutral = myTeam == "Neutral"
+
+	for _, other in ipairs(workspace:GetChildren()) do
+		if other ~= minion and other:IsA("Model") then
+
+			-- 🆕 DETECCIÓN MEJORADA PARA NEUTRALES - CORREGIDA
+			local isEnemy
+			if isNeutral then
+				-- 🎯 CORRECCIÓN: Los neutrales SOLO atacan a no-neutrales
+				-- NO atacan a otros neutrales
+				local otherTeam = EquipoManager.ObtenerEquipo(other)
+				isEnemy = otherTeam ~= "Neutral"  -- Solo ataca a no-neutrales
+			else
+				-- Comportamiento normal para minions de equipo
+				local success, result = pcall(function()
+					return EquipoManager.SonEnemigos(minion, other)
+				end)
+				isEnemy = success and result
+			end
+
+			if not isEnemy then continue end
+
+			local otherRoot = GetRoot(other)
+			if not otherRoot then continue end
+
+			-- 🆕 LOS NEUTRALES NO DEBEN ALEJARSE DEMASIADO DE SU SPAWN
+			if isNeutral and currentWaypointPosition then
+				local distanceFromSpawn = (otherRoot.Position - currentWaypointPosition).Magnitude
+				if distanceFromSpawn > DETECTION_RANGE * 2 then
+					continue -- Ignorar enemigos muy lejos del spawn
+				end
+			end
+
+			local otherHumanoid = other:FindFirstChildOfClass("Humanoid")
+			local otherVida = other:FindFirstChild("Vida")
+			local isStructure = other:GetAttribute("IsStructure")
+
+			local isHumanoidValid = otherHumanoid and otherHumanoid.Health > 0
+			local isVidaValid = otherVida and (otherVida:IsA("IntValue") or otherVida:IsA("NumberValue")) and otherVida.Value > 0
+
+			if not isHumanoidValid and not isVidaValid and not isStructure then
+				continue
+			end
+
+			if not isNearBase and isStructure then
+				local distanceToLane = (otherRoot.Position - currentWaypointPosition).Magnitude
+				if distanceToLane > LANE_COMMITMENT_DISTANCE then
+					continue
+				end
+			end
+
+			if EstadoManager.TieneEstado(other, "Invulnerable") then
+				continue
+			end
+
+			local distToEnemy = (myPosition - otherRoot.Position).Magnitude
+			if distToEnemy <= DETECTION_RANGE and distToEnemy < closestDist then
+				closest = other
+				closestDist = distToEnemy
+			end
+		end
+	end
+
+	return closest
+end
+
+-- 🔥 CORREGIDO: Usar tabla global en lugar de propiedad del modelo
+function MinionAI.PlayAttackAnimation(minion)
+	if minionsAnimations[minion] then
+		minionsAnimations[minion]:playAttack()
+	end
+end
+
+function MinionAI.Attack(minion, target)
+	-- 🚫 VERIFICAR SI EL MINION PUEDE ATACAR
+	if not MinionPuedeAtacar(minion) then
+		if EstadoManager.TieneEstado(minion, "Aturdido") then
+			print("🌀 Minion " .. minion.Name .. " no puede atacar - está aturdido")
+		elseif EstadoManager.TieneEstado(minion, "BloqueadoAtaque") then
+			print("🛡️ Minion " .. minion.Name .. " no puede atacar - ataque bloqueado")
+		end
+		return
+	end
+
+	MinionAI.PlayAttackAnimation(minion)
+	if EstadoManager.TieneEstado(target, "Invulnerable") then return end
+
+	-- 🔥 OBTENER DAÑO ACTUAL (puede ser base o con bonificación)
+	local danio = minion:GetAttribute("Danio") or minion:GetAttribute("DanioBase") or 10
+
+	local isStructure = target:GetAttribute("IsStructure") or target.Name:match("^[TV]_.*") or target:FindFirstChild("IsStructure")
+	if isStructure then
+		local vidaValue = target:FindFirstChild("Vida")
+		if vidaValue and (vidaValue:IsA("IntValue") or vidaValue:IsA("NumberValue")) and vidaValue.Value > 0 then
+			vidaValue.Value -= danio
+			-- 🔥 MOSTRAR DAÑO ESPECIAL SI TIENE BONIFICACIÓN
+			if minion:GetAttribute("TieneBonificacion") then
+				print("⚔️🎯 " .. minion.Name .. " ataca estructura por " .. danio .. " de daño (BONIFICADO)")
+			else
+				print("⚔️ " .. minion.Name .. " ataca estructura por " .. danio .. " de daño")
+			end
+		end
+	else
+		local humanoid = target:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 then
+			humanoid:TakeDamage(danio)
+			if minion:GetAttribute("TieneBonificacion") then
+				print("⚔️🎯 " .. minion.Name .. " ataca " .. target.Name .. " por " .. danio .. " de daño (BONIFICADO)")
+			else
+				print("⚔️ " .. minion.Name .. " ataca " .. target.Name .. " por " .. danio .. " de daño")
+			end
+		else
+			local vidaValue = target:FindFirstChild("Vida")
+			if vidaValue and (vidaValue:IsA("IntValue") or vidaValue:IsA("NumberValue")) and vidaValue.Value > 0 then
+				vidaValue.Value -= danio
+			end
+		end
+	end
+end
+
+function MinionAI.ShouldRecalculateRoute(minion, currentWaypointPos, stuckTime)
+	local root = GetRoot(minion)
+	if not root then return true end
+
+	local currentDistance = (root.Position - currentWaypointPos).Magnitude
+	return stuckTime > STUCK_TIME_THRESHOLD and currentDistance > 15
+end
+
+-- 🆕 NUEVA FUNCIÓN: Comportamiento específico para minions neutrales
+function MinionAI.StartNeutralBehavior(minion, spawnPosition)
+	local humanoid = minion:FindFirstChildOfClass("Humanoid")
+	local root = GetRoot(minion)
+	if not humanoid or not root then return end
+
+	local patrolRadius = 15  -- 🆕 REDUCIDO PARA EVITAR CHOQUES
+	local maxChaseDistance = DETECTION_RANGE * 1.2  -- 🆕 REDUCIDO PARA MANTENERSE CERCA
+
+	-- 🆕 AGREGAR VARIACIÓN ALEATORIA EN EL COMPORTAMIENTO
+	local variacionComportamiento = minion:GetAttribute("SpawnIndex") or 1
+	local patrolRadiusVariado = patrolRadius + (variacionComportamiento * 2)
+
+	print("🌿 Iniciando comportamiento neutral para: " .. minion.Name .. " (Radio: " .. patrolRadiusVariado .. ")")
+
+	while minion and minion.Parent == workspace and humanoid.Health > 0 do
+		-- 🚫 VERIFICAR SI EL MINION PUEDE ACTUAR
+		if not MinionPuedeActuar(minion) then
+			task.wait(1)
+			continue
+		end
+
+		-- Buscar enemigos cercanos (usando spawnPosition como referencia)
+		local enemy = MinionAI.FindNearestEnemy(minion, spawnPosition, true)
+
+		if enemy then
+			local enemyRoot = GetRoot(enemy)
+			if enemyRoot then
+				local distToEnemy = (root.Position - enemyRoot.Position).Magnitude
+				local distFromSpawn = (root.Position - spawnPosition).Magnitude
+
+				-- 🆕 VERIFICAR QUE NO SE ALEJE DEMASIADO DEL SPAWN
+				if distFromSpawn > maxChaseDistance then
+					-- Regresar al spawn si se alejó demasiado
+					humanoid:MoveTo(spawnPosition)
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:playWalk()
+					end
+
+					-- Esperar a regresar
+					local returnTimeout = 5
+					local startTime = tick()
+					while (root.Position - spawnPosition).Magnitude > 10 and (tick() - startTime) < returnTimeout do
+						task.wait(0.1)
+					end
+
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:stopWalk()
+					end
+				elseif distToEnemy <= ATTACK_RANGE then
+					-- 🔥 ATACAR SI ESTÁ EN RANGO
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:stopWalk()
+					end
+
+					-- Alinearse con el enemigo
+					local lookAt = CFrame.lookAt(root.Position, Vector3.new(enemyRoot.Position.X, root.Position.Y, enemyRoot.Position.Z))
+					TweenService:Create(root, TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = lookAt}):Play()
+
+					MinionAI.Attack(minion, enemy)
+					task.wait(ATTACK_COOLDOWN)
+				else
+					-- 🔥 PERSEGUIR AL ENEMIGO
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:playWalk()
+					end
+
+					humanoid:MoveTo(enemyRoot.Position)
+
+					-- Timeout de persecución
+					local chaseTimeout = 3
+					local chaseStart = tick()
+					while (tick() - chaseStart) < chaseTimeout and humanoid.Health > 0 do
+						if not MinionPuedeActuar(minion) then break end
+
+						local currentDist = (root.Position - enemyRoot.Position).Magnitude
+						if currentDist <= ATTACK_RANGE then
+							break
+						end
+
+						-- Verificar si el enemigo se fue o murió
+						if not enemy or not enemy.Parent or not enemyRoot.Parent then
+							break
+						end
+
+						task.wait(0.1)
+					end
+				end
+			end
+		else
+			-- 🆕 COMPORTAMIENTO DE PATRULLA SI NO HAY ENEMIGOS
+			local currentPos = root.Position
+			local distFromSpawn = (currentPos - spawnPosition).Magnitude
+
+			if distFromSpawn > 10 then
+				-- Regresar al área del spawn
+				if minionsAnimations[minion] then
+					minionsAnimations[minion]:playWalk()
+				end
+				humanoid:MoveTo(spawnPosition)
+
+				local returnTimeout = 5
+				local startTime = tick()
+				while (root.Position - spawnPosition).Magnitude > 5 and (tick() - startTime) < returnTimeout do
+					task.wait(0.1)
+				end
+			else
+				-- Patrulla aleatoria en área pequeña
+				if math.random(1, 100) <= 30 then -- 30% de probabilidad de moverse
+					local randomOffset = Vector3.new(
+						math.random(-patrolRadius, patrolRadius),
+						0,
+						math.random(-patrolRadius, patrolRadius)
+					)
+					local patrolPoint = spawnPosition + randomOffset
+
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:playWalk()
+					end
+					humanoid:MoveTo(patrolPoint)
+
+					task.wait(math.random(2, 4))
+
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:stopWalk()
+					end
+				else
+					-- Esperar en posición
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:stopWalk()
+					end
+					task.wait(math.random(1, 3))
+				end
+			end
+		end
+
+		task.wait(0.1)
+	end
+end
+
+-- 🔥 CORREGIDO: Usar tabla global para animaciones
+function MinionAI.MoveToWaypoint(minion, targetPosition, onWaypointReached, waypointIndex, waypointName, totalWaypoints, currentWP)
+	local humanoid = minion:FindFirstChildOfClass("Humanoid")
+	local root = GetRoot(minion)
+	if not humanoid or not root then return false end
+
+	-- 🚫 VERIFICAR SI EL MINION PUEDE MOVERSE
+	if not MinionPuedeActuar(minion) then
+		print("🌀 Minion " .. minion.Name .. " no puede moverse - está aturdido/inmovilizado")
+
+		-- Detener cualquier movimiento y animación
+		humanoid:MoveTo(root.Position)
+		if minionsAnimations[minion] then
+			minionsAnimations[minion]:stopWalk()
+		end
+
+		-- Esperar hasta que pueda actuar nuevamente
+		local waitStart = tick()
+		while not MinionPuedeActuar(minion) and (tick() - waitStart < 10) do
+			task.wait(0.5)
+		end
+
+		-- Si después de esperar sigue aturdido, cancelar el movimiento
+		if not MinionPuedeActuar(minion) then
+			return false
+		end
+	end
+
+	local MOVEMENT_TIMEOUT = 15
+	local CHECK_INTERVAL = 0.5
+	local startTime = tick()
+	local isNearBase = (totalWaypoints - currentWP) <= BASE_WAYPOINT_THRESHOLD
+
+	-- 🆕 DETECTAR SI ES NEUTRAL PARA COMPORTAMIENTO ESPECIAL
+	local isNeutral = EquipoManager.EsNeutral(minion)
+	local spawnPosition = root.Position -- Para neutrales
+
+	-- 🔥 INICIAR ANIMACIÓN DE CAMINATA (si existe)
+	if minionsAnimations[minion] then
+		minionsAnimations[minion]:playWalk()
+	end
+
+	humanoid:MoveTo(targetPosition)
+	local moveConnection
+	local movementSuccess = false
+
+	moveConnection = humanoid.MoveToFinished:Connect(function(success)
+		movementSuccess = success
+		if moveConnection then moveConnection:Disconnect() end
+	end)
+
+	while tick() - startTime < MOVEMENT_TIMEOUT and humanoid.Health > 0 do
+		-- 🚫 VERIFICAR SI EL MINION PUEDE ACTUAR DURANTE EL MOVIMIENTO
+		if not MinionPuedeActuar(minion) then
+			print("🌀 Minion " .. minion.Name .. " interrumpido - está aturdido/inmovilizado")
+			humanoid:MoveTo(root.Position)
+			if minionsAnimations[minion] then
+				minionsAnimations[minion]:stopWalk()
+			end
+			break
+		end
+
+		local currentDistance = (root.Position - targetPosition).Magnitude
+		if currentDistance <= WAYPOINT_TOLERANCE or movementSuccess then break end
+
+		-- 🆕 PARA NEUTRALES, USAR SPAWN POSITION COMO REFERENCIA
+		local referencePosition = isNeutral and spawnPosition or targetPosition
+		local enemy = MinionAI.FindNearestEnemy(minion, referencePosition, isNearBase or isNeutral)
+
+		if enemy then
+			local enemyRoot = GetRoot(enemy)
+			if enemyRoot then
+				local distToEnemy = (root.Position - enemyRoot.Position).Magnitude
+
+				-- 🆕 LOS NEUTRALES NO PERSIGUEN DEMASIADO LEJOS
+				if isNeutral then
+					local distFromSpawn = (root.Position - spawnPosition).Magnitude
+					if distFromSpawn > DETECTION_RANGE * 1.5 then
+						-- Demasiado lejos, ignorar enemigo
+						enemy = nil
+					end
+				end
+
+				if enemy then
+					-- 🔥 Calcular dirección y distancia hacia el enemigo (mantener distancia de ataque)
+					local toEnemy = enemyRoot.Position - root.Position
+					local distToEnemy = toEnemy.Magnitude
+					local direction
+					if distToEnemy > 0.1 then
+						direction = toEnemy.Unit
+					else
+						direction = Vector3.new(0, 0, 1) -- fallback por si están en la misma posición
+					end
+
+					local safeDistance = math.max(1.5, ATTACK_RANGE * 0.6)-- no dejarlo < 2 studs
+					local fightPosition = enemyRoot.Position - direction * safeDistance
+
+					-- Agregar un leve desplazamiento lateral aleatorio para evitar choques frontales perfectos
+					local randomAngle = math.random() * math.pi * 2
+					local sideOffset = Vector3.new(math.cos(randomAngle), 0, math.sin(randomAngle)) * math.random(1, 2)
+					fightPosition = fightPosition + sideOffset
+
+					-- 🔥 Moverse hacia esa posición segura
+					humanoid:MoveTo(fightPosition)
+
+					-- Esperar a que llegue cerca del fightPosition o timeout
+					local arrived = false
+					local arriveStart = tick()
+					local ARRIVE_TIMEOUT = 1.0
+					while tick() - arriveStart < ARRIVE_TIMEOUT and humanoid.Health > 0 do
+						-- 🚫 VERIFICAR SI EL MINION PUEDE ACTUAR DURANTE EL MOVIMIENTO DE COMBATE
+						if not MinionPuedeActuar(minion) then
+							print("🌀 Minion " .. minion.Name .. " interrumpido en combate - está aturdido/inmovilizado")
+							humanoid:MoveTo(root.Position)
+							if minionsAnimations[minion] then
+								minionsAnimations[minion]:stopWalk()
+							end
+							break
+						end
+
+						if (root.Position - fightPosition).Magnitude <= 2.0 then
+							arrived = true
+							break
+						end
+						task.wait(0.05)
+					end
+
+					-- Detener animación al llegar o al timeout
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:stopWalk()
+					end
+
+					while humanoid.Health > 0 do
+						-- 🚫 VERIFICAR SI EL MINION PUEDE ACTUAR DURANTE EL COMBATE
+						if not MinionPuedeActuar(minion) then
+							print("🌀 Minion " .. minion.Name .. " interrumpido en combate - está aturdido/inmovilizado")
+							break
+						end
+
+						if not enemy or not enemy.Parent then break end
+
+						local enemyRootNow = GetRoot(enemy)
+						if not enemyRootNow then break end
+
+						local enemyHumanoid = enemy:FindFirstChildOfClass("Humanoid")
+						if not enemyHumanoid or enemyHumanoid.Health <= 0 then
+							break -- 💀 enemigo muerto o sin vida
+						end
+
+						local distNow = (root.Position - enemyRootNow.Position).Magnitude
+						if distNow > ATTACK_RANGE * 1.4 then
+							local newEnemy = MinionAI.FindNearestEnemy(minion, referencePosition, isNearBase or isNeutral)
+							if newEnemy and newEnemy ~= enemy then
+								enemy = newEnemy
+								continue
+							else
+								break
+							end
+						end
+
+						-- 🧭 Alinear al enemigo antes de atacar
+						local lookAt = CFrame.lookAt(root.Position, Vector3.new(enemyRootNow.Position.X, root.Position.Y, enemyRootNow.Position.Z))
+						TweenService:Create(root, TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = lookAt}):Play()
+
+						-- ⚔️ Atacar (la función Attack ya verifica el estado)
+						MinionAI.Attack(minion, enemy)
+						task.wait(ATTACK_COOLDOWN)
+					end
+
+					-- ✅ Reanudar caminata después del combate (si puede actuar)
+					if humanoid.Health > 0 and MinionPuedeActuar(minion) then
+						if minionsAnimations[minion] then minionsAnimations[minion]:playWalk() end
+
+						-- 🔥 Nuevo chequeo rápido antes de iniciar movimiento
+						local preEnemy = MinionAI.FindNearestEnemy(minion, referencePosition, isNearBase or isNeutral)
+						if preEnemy then
+							local enemyRoot = GetRoot(preEnemy)
+							if enemyRoot then
+								humanoid:MoveTo(enemyRoot.Position)
+								if minionsAnimations[minion] then
+									minionsAnimations[minion]:stopWalk()
+								end
+								MinionAI.Attack(minion, preEnemy)
+								return false -- cancela el waypoint temporalmente mientras pelea
+							end
+						end
+
+						-- ✅ Si no hay enemigo cerca, continuar al waypoint normalmente
+						humanoid:MoveTo(targetPosition)
+					end
+				end
+			end
+		end
+
+		task.wait(CHECK_INTERVAL)
+	end
+
+	if moveConnection then moveConnection:Disconnect() end
+
+	local finalDistance = (root.Position - targetPosition).Magnitude
+	local success = finalDistance <= WAYPOINT_TOLERANCE or movementSuccess
+
+	if success and onWaypointReached then
+		onWaypointReached(waypointIndex, waypointName)
+	end
+
+	-- 🔥 DETENER ANIMACIÓN SI LLEGÓ AL WAYPOINT
+	if success and minionsAnimations[minion] then
+		minionsAnimations[minion]:stopWalk()
+	end
+
+	return success
+end
+
+-- 🔥 CORREGIDO: Inicialización robusta sin usar propiedades del modelo
+function MinionAI.Start(minion, onWaypointReached)
+	local humanoid = minion:FindFirstChildOfClass("Humanoid")
+	local root = GetRoot(minion)
+	if not humanoid or not root then 
+		warn("❌ MinionAI: No se pudo inicializar - Humanoid o Root faltante")
+		return 
+	end
+
+	-- 🔥 INICIALIZAR SISTEMA DE ANIMACIONES CON MANEJO DE ERRORES
+	if MinionAnimations then
+		local animations
+		local success, err = pcall(function()
+			animations = MinionAnimations.new(minion)
+		end)
+
+		if success and animations then
+			minionsAnimations[minion] = animations
+			print("✅ MinionAI: Animaciones cargadas para " .. minion.Name)
+		else
+			warn("❌ MinionAI: Falló la inicialización de animaciones para " .. minion.Name .. ": " .. tostring(err))
+			minionsAnimations[minion] = nil
+		end
+	else
+		warn("⚠️ MinionAI: MinionAnimations no disponible")
+		minionsAnimations[minion] = nil
+	end
+
+	minion:SetAttribute("EsMinion", true)
+
+	-- 🔥 CONECTAR EVENTO DE MUERTE
+	humanoid.Died:Connect(function()
+		-- 🔥 LIMPIAR ANIMACIONES AL MORIR
+		if minionsAnimations[minion] then
+			minionsAnimations[minion]:destroy()
+			minionsAnimations[minion] = nil
+		end
+		task.wait(3)
+		if minion and minion.Parent then 
+			minion:Destroy() 
+		end
+	end)
+
+	-- 🆕 DETECTAR SI ES MINION NEUTRAL
+	local isNeutral = EquipoManager.EsNeutral(minion)
+	local spawnPosition = root.Position
+
+	if isNeutral then
+		-- 🎯 COMPORTAMIENTO PARA MINIONS NEUTRALES
+		print("🌿 Iniciando minion neutral: " .. minion.Name)
+		MinionAI.StartNeutralBehavior(minion, spawnPosition)
+	else
+		-- 🎯 COMPORTAMIENTO NORMAL PARA MINIONS DE EQUIPO
+		local minionLane = minion:GetAttribute("Lane")
+		if not minionLane then 
+			warn("❌ MinionAI: Minion sin atributo 'Lane': " .. minion.Name)
+			return 
+		end
+
+		local waypoints = MinionAI.GetWaypoints(minion)
+		if #waypoints == 0 then 
+			warn("❌ MinionAI: No hay waypoints para " .. minion.Name)
+			return 
+		end
+
+		local currentWP = 1
+		local stuckTimer = 0
+		local lastPosition = root.Position
+
+		task.spawn(function()
+			while minion and minion.Parent == workspace and humanoid.Health > 0 do
+				local currentWaypointPos = waypoints[currentWP] and waypoints[currentWP].Position or root.Position
+				local currentPos = root.Position
+
+				if (currentPos - lastPosition).Magnitude < MIN_MOVEMENT_THRESHOLD then
+					stuckTimer += 0.1
+				else
+					stuckTimer = 0
+					lastPosition = currentPos
+				end
+
+				if MinionAI.ShouldRecalculateRoute(minion, currentWaypointPos, stuckTimer) then
+					currentWP += 1
+					stuckTimer = 0
+					if currentWP > #waypoints then
+						if onWaypointReached then onWaypointReached(#waypoints, "FINISHED") end
+						break
+					end
+					lastPosition = root.Position
+				end
+
+				if currentWP <= #waypoints then
+					local targetPos = waypoints[currentWP].Position
+					local reached = MinionAI.MoveToWaypoint(minion, targetPos, onWaypointReached, currentWP, waypoints[currentWP].Name, #waypoints, currentWP)
+					if reached then currentWP += 1 end
+				else
+					if onWaypointReached and currentWP == #waypoints + 1 then
+						onWaypointReached(#waypoints, "FINISHED")
+						currentWP += 1
+					end
+					-- 🔥 DETENER ANIMACIÓN AL FINALIZAR
+					if minionsAnimations[minion] then
+						minionsAnimations[minion]:stopWalk()
+					end
+					humanoid:MoveTo(root.Position)
+					task.wait(1)
+				end
+				task.wait(0.1)
+			end
+
+			if humanoid.Health > 0 then 
+				humanoid:MoveTo(root.Position) 
+				-- 🔥 DETENER ANIMACIÓN AL FINALIZAR
+				if minionsAnimations[minion] then
+					minionsAnimations[minion]:stopWalk()
+				end
+			end
+		end)
+	end
+end
+
+return MinionAI
