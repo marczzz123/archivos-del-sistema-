@@ -1,3 +1,4 @@
+-starteplayerscripts
 -- LocalScript GENERAL para todos los animales
 local function setupAnimal(animal)
 	-- Determinar tipo de animal por el evento remoto
