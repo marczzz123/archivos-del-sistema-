@@ -1,0 +1,265 @@
+-- ModuleScript: TorreManager
+-- ModuleScript: TorreManager
+local TorreManager = {}
+TorreManager.__index = TorreManager
+
+-- ⚙️ IMPORTAR SISTEMA DE INVULNERABILIDAD
+local SistemaInvulnerabilidadTorres = require(script.Parent:WaitForChild("SistemaInvulnerabilidadTorres"))
+
+
+-- 🔥 CONFIGURACIÓN DE BONIFICACIONES
+local BONIFICACIONES = {
+	danio = 1.3,      -- +30% de daño
+	vida = 1.25,      -- +25% de vida
+}
+
+-- 🔥 BONIFICACIONES ACTIVAS POR EQUIPO Y LÍNEA
+local bonificacionesActivas = {
+	HijosDelVacio = { Bot = false, Mid = false, Top = false },
+	TemplariosDeLaLuz = { Bot = false, Mid = false, Top = false }
+}
+
+-- 🔥 REGISTRO DE ESTADO DE TORRES
+local estadoTorres = {}
+
+function TorreManager.Init()
+	print("🏰 TorreManager: Inicializando sistema de torres...")
+
+	-- 🧱 Inicializar sistema de invulnerabilidad
+	SistemaInvulnerabilidadTorres.Init()
+	
+	print("🏰 TorreManager: Inicializando sistema de torres...")
+
+
+	-- Registrar todas las torres existentes
+	for _, torre in ipairs(workspace:GetChildren()) do
+		if torre.Name:match("^[TV]_Evo_") then
+			TorreManager.RegistrarTorre(torre)
+		end
+	end
+
+	-- Listener para nuevas torres
+	workspace.ChildAdded:Connect(function(child)
+		if child.Name:match("^[TV]_Evo_") then
+			task.wait(1)
+			TorreManager.RegistrarTorre(child)
+		end
+	end)
+
+	print("✅ TorreManager: Sistema inicializado")
+end
+
+function TorreManager.RegistrarTorre(torre)
+	local vida = torre:FindFirstChild("Vida")
+	if not vida then
+		warn("❌ Torre sin atributo Vida: " .. torre.Name)
+		return
+	end
+
+	local equipoTorre, lane = TorreManager.ObtenerEquipoYLane(torre.Name)
+	if not equipoTorre then return end
+
+	-- Configurar atributos
+	torre:SetAttribute("Equipo", equipoTorre)
+	torre:SetAttribute("Lane", lane)
+	torre:SetAttribute("IsStructure", true)
+
+	print("🏰 Torre registrada: " .. torre.Name .. " | Equipo: " .. equipoTorre .. " | Lane: " .. lane)
+
+	-- Conectar evento de cambio de vida
+	vida.Changed:Connect(function()
+		if vida.Value <= 0 then
+			TorreManager.OnTorreDestruida(torre, equipoTorre, lane)
+		end
+	end)
+end
+
+function TorreManager.ObtenerEquipoYLane(nombreTorre)
+	local equipo, lane
+
+	if nombreTorre:sub(1, 1) == "T" then
+		equipo = "TemplariosDeLaLuz"
+	elseif nombreTorre:sub(1, 1) == "V" then
+		equipo = "HijosDelVacio"
+	else
+		return nil, nil
+	end
+
+	if nombreTorre:find("Cen") then
+		lane = "Mid"
+	elseif nombreTorre:find("Der") then
+		lane = "Bot"
+	elseif nombreTorre:find("Izq") then
+		lane = "Top"
+	else
+		return nil, nil
+	end
+
+	return equipo, lane
+end
+
+function TorreManager.OnTorreDestruida(torre, equipoDestruido, lane)
+	-- Crear registro si no existe
+	if not estadoTorres[equipoDestruido] then
+		estadoTorres[equipoDestruido] = {}
+	end
+	if not estadoTorres[equipoDestruido][lane] then
+		estadoTorres[equipoDestruido][lane] = {}
+	end
+
+	-- Marcar la torre como destruida
+	estadoTorres[equipoDestruido][lane][torre.Name] = true
+	print("💥 Torre destruida registrada: " .. torre.Name .. " (" .. equipoDestruido .. " - " .. lane .. ")")
+
+	-- Verificar si todas las torres de esa lane están destruidas
+	local todasDestruidas = true
+	for _, obj in ipairs(workspace:GetChildren()) do
+		if obj:IsA("Model") and obj.Name:match("^[TV]_Evo_") then
+			local eq, ln = TorreManager.ObtenerEquipoYLane(obj.Name)
+			if eq == equipoDestruido and ln == lane then
+				local vida = obj:FindFirstChild("Vida")
+				if vida and vida.Value > 0 then
+					todasDestruidas = false
+					break
+				end
+			end
+		end
+	end
+
+	-- Si aún quedan torres, no activar bonificación
+	if not todasDestruidas then
+		print("⚠️ Aún quedan torres vivas en la línea " .. lane .. " del equipo " .. equipoDestruido)
+		return
+	end
+
+	-- Determinar equipo beneficiado (enemigo)
+	local equipoBeneficiado = (equipoDestruido == "HijosDelVacio") and "TemplariosDeLaLuz" or "HijosDelVacio"
+
+	-- Activar bonificación para esa línea
+	bonificacionesActivas[equipoBeneficiado][lane] = true
+
+	-- Registrar estado general
+	estadoTorres[equipoDestruido][lane].todasDestruidas = true
+
+	-- Anunciar evento
+	TorreManager.AnunciarDestruccion(torre, equipoDestruido, equipoBeneficiado, lane)
+
+	print("🎯 BONIFICACIÓN ACTIVADA (todas las torres destruidas) para NUEVOS minions de " .. equipoBeneficiado .. " en lane " .. lane)
+end
+
+function TorreManager.AnunciarDestruccion(torre, equipoDestruido, equipoBeneficiado, lane)
+	local danioPct = math.floor((BONIFICACIONES.danio - 1) * 100 + 0.5)
+	local vidaPct = math.floor((BONIFICACIONES.vida - 1) * 100 + 0.5)
+
+	print("💥 TODAS LAS TORRES DESTRUIDAS EN LÍNEA!")
+	print("   🏰 Línea: " .. lane)
+	print("   💀 Equipo Derrotado: " .. equipoDestruido)
+	print("   🎯 Equipo Beneficiado: " .. equipoBeneficiado)
+	print(string.format("   ⚔️ Bonificación para NUEVOS minions: +%d%% Danio, +%d%% Vida", danioPct, vidaPct))
+
+	for _, player in ipairs(game.Players:GetPlayers()) do
+		-- Puedes implementar un sistema de UI aquí
+	end
+end
+
+function TorreManager.AplicarBonificacionSiCorresponde(minion)
+	local equipo = minion:GetAttribute("Equipo")
+	local lane = minion:GetAttribute("Lane")
+
+	if not equipo or not lane then
+		return false
+	end
+
+	if bonificacionesActivas[equipo] and bonificacionesActivas[equipo][lane] then
+		TorreManager.AplicarBonificacionMinion(minion)
+		return true
+	end
+
+	return false
+end
+
+function TorreManager.AplicarBonificacionMinion(minion)
+	local humanoid = minion:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	local vidaBase = minion:GetAttribute("VidaBase") or 100
+	local danioBase = minion:GetAttribute("DanioBase") or 10
+
+	local vidaBonus = vidaBase * BONIFICACIONES.vida
+	local danioBonus = danioBase * BONIFICACIONES.danio
+
+	humanoid.MaxHealth = vidaBonus
+	humanoid.Health = vidaBonus
+	minion:SetAttribute("Danio", danioBonus)
+	minion:SetAttribute("TieneBonificacion", true)
+
+	TorreManager.AplicarEfectoVisual(minion)
+
+	print("🎯 Minion con bonificación aplicada: " .. minion.Name)
+end
+
+function TorreManager.AplicarEfectoVisual(minion)
+	local efectoAnterior = minion:FindFirstChild("EfectoBonificacion")
+	if efectoAnterior then
+		efectoAnterior:Destroy()
+	end
+
+	local particulas = Instance.new("ParticleEmitter")
+	particulas.Name = "EfectoBonificacion"
+	particulas.Color = ColorSequence.new(Color3.fromRGB(255, 215, 0))
+	particulas.Size = NumberSequence.new(0.5)
+	particulas.Lifetime = NumberRange.new(0.5, 1)
+	particulas.Rate = 10
+	particulas.SpreadAngle = Vector2.new(45, 45)
+
+	local root = minion:FindFirstChild("HumanoidRootPart")
+	if root then
+		particulas.Parent = root
+	end
+end
+
+function TorreManager.EstaLaneConBonificacion(equipo, lane)
+	return bonificacionesActivas[equipo] and bonificacionesActivas[equipo][lane] or false
+end
+
+function TorreManager.ObtenerEstadoTorres()
+	return estadoTorres
+end
+
+function TorreManager.ObtenerBonificacionesActivas()
+	return bonificacionesActivas
+end
+
+function TorreManager.DebugInfo()
+	print("\n=== 🏰 DEBUG TORRE MANAGER ===")
+	print("Estado de Torres por Equipo y Línea:")
+
+	for equipo, lanes in pairs(estadoTorres) do
+		print("   " .. equipo .. ":")
+		for lane, torres in pairs(lanes) do
+			if torres.todasDestruidas then
+				print("     " .. lane .. ": 💀 TODAS DESTRUIDAS")
+			else
+				local contador = 0
+				for torreName, destruida in pairs(torres) do
+					if torreName ~= "todasDestruidas" and destruida then
+						contador = contador + 1
+					end
+				end
+				print("     " .. lane .. ": " .. contador .. " torres destruidas")
+			end
+		end
+	end
+
+	print("\nBonificaciones Activas (para NUEVOS minions):")
+	for equipo, lanes in pairs(bonificacionesActivas) do
+		for lane, activa in pairs(lanes) do
+			if activa then
+				print("   " .. equipo .. " - " .. lane .. ": ✅ ACTIVA")
+			end
+		end
+	end
+	print("============================\n")
+end
+
+return TorreManager
