@@ -1,0 +1,78 @@
+local PersonajesModule = {}
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local modelosFolder = ReplicatedStorage:WaitForChild("Modelos")
+
+PersonajesModule.personajes = {
+	Personaje1 = {
+		Nombre = "Spartan",
+		Descripcion = "Criatura de madera y protector ancestral...",
+		Modelo = modelosFolder:WaitForChild("Personaje1"),
+		Equipo = "Neutral"
+	},
+	Personaje2 = {
+		Nombre = "Nythera",
+		Descripcion = "Vampira eterna, bella y letal como la noche.",
+		Modelo = modelosFolder:WaitForChild("Personaje2"),
+		Equipo = "Neutral"
+	},
+	Personaje3 = {
+		Nombre = "Sonic",
+		Descripcion = "Un erizo muy perron.",
+		Modelo = modelosFolder:WaitForChild("Personaje3"),
+		Equipo = "Neutral"
+	},
+	Personaje4 = {
+		Nombre = "DragonYinYan",
+		Descripcion = "Un gran sabio que puede controlar dragones.",
+		Modelo = modelosFolder:WaitForChild("Personaje4"),
+		Equipo = "Neutral"
+	},
+	Personaje6 = {
+		Nombre = "Blacktor",
+		Descripcion = "Un asesino en serie que fue corrompido por la oscuridad",
+		Modelo = modelosFolder:WaitForChild("Personaje6"),
+		Equipo = "Neutral"
+	},
+	Personaje7 = {
+		Nombre = "Zombie",
+		Descripcion = "Un muerto viviente con hambre de cerebros.",
+		Modelo = modelosFolder:WaitForChild("Personaje7"),
+		Equipo = "Neutral"
+	},
+	Personaje8 = {
+		Nombre = "Mireya",
+		Descripcion = "Una sanadora que convierte el dolor en vida y la oscuridad en calma",
+		Modelo = modelosFolder:WaitForChild("Personaje8"),
+		Equipo = "Neutral"
+	}
+}
+
+function PersonajesModule.obtenerPersonajeAleatorio()
+	local nombres = {}
+	for nombre, _ in pairs(PersonajesModule.personajes) do
+		table.insert(nombres, nombre)
+	end
+	return nombres[math.random(1, #nombres)]
+end
+
+function PersonajesModule.obtenerEquipoBalanceado()
+	local equipos = {
+		Equipo1 = 0,
+		Equipo2 = 0
+	}
+
+	for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
+		local equipo = player:GetAttribute("Equipo")
+		if equipo and equipos[equipo] then
+			equipos[equipo] = equipos[equipo] + 1
+		end
+	end
+
+	if equipos.Equipo1 <= equipos.Equipo2 then
+		return "Equipo1"
+	else
+		return "Equipo2"
+	end
+end
+
+return PersonajesModule
