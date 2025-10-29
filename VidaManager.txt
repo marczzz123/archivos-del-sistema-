@@ -1,3 +1,4 @@
+--SERVERscriptservice
 local nivelHandler = require(game.ServerScriptService.NivelHandler)
 local Players = game:GetService("Players")
 local EstadoManager = require(game.ServerScriptService:WaitForChild("EstadoManager"))
