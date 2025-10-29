@@ -1,0 +1,345 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+local Players = game:GetService("Players")
+
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local habilidadEvent = RemoteEvents:WaitForChild("HabilidadUsada")
+local GolpeBasico = RemoteEvents:WaitForChild("GolpeBasico")
+local SeleccionEvent = RemoteEvents:WaitForChild("SeleccionHabilidad")
+local CancelarSeleccionEvent = RemoteEvents:WaitForChild("CancelarSeleccionHabilidad")
+local DireccionHabilidadEvent = RemoteEvents:WaitForChild("DireccionHabilidad")
+-- 🔥 REEMPLAZA TODO ESTO EN EL SERVIDOR:
+print("🔄 [PASO 2] Configurando AtaqueMovilEvent en servidor...")
+
+-- ✅ CORREGIDO: Buscar en RemoteEvents
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local AtaqueMovilEvent = RemoteEvents:FindFirstChild("AtaqueMovilEvent")
+
+if not AtaqueMovilEvent then
+	print("❌ [PASO 2-A] AtaqueMovilEvent no existe en RemoteEvents, creando...")
+	AtaqueMovilEvent = Instance.new("RemoteEvent")
+	AtaqueMovilEvent.Name = "AtaqueMovilEvent"
+	AtaqueMovilEvent.Parent = RemoteEvents
+	print("✅ [PASO 2-B] AtaqueMovilEvent creado en RemoteEvents")
+else
+	print("✅ [PASO 2-C] AtaqueMovilEvent ya existe en RemoteEvents")
+end
+
+print("🎯 [PASO 2-D] Conectando manejador de AtaqueMovilEvent...")
+
+AtaqueMovilEvent.OnServerEvent:Connect(function(player)
+	print("🔄 [PASO 3] AtaqueMovilEvent recibido en SERVIDOR")
+	print("   👤 Jugador: " .. player.Name)
+	print("   🕒 Timestamp: " .. tick())
+
+	-- Reenviar al mismo cliente para animaciones
+	print("🔄 [PASO 3-A] Reenviando AtaqueMovilEvent al cliente...")
+	AtaqueMovilEvent:FireClient(player)
+	print("✅ [PASO 3-B] AtaqueMovilEvent reenviado a: " .. player.Name)
+end)
+
+print("✅ [PASO 2-E] Configuración de AtaqueMovilEvent completada")
+-- Cargar módulos
+local habilidadesPorPersonaje = require(ReplicatedStorage:WaitForChild("Habilidades"):WaitForChild("HabilidadesModule"))
+local VidaManager = require(ServerScriptService:WaitForChild("VidaManager"))
+local BasicAttacks = require(ServerScriptService:WaitForChild("BasicAttacksModule"))
+local EquipoManager = require(ReplicatedStorage:WaitForChild("EquipoManager"))
+
+-- Almacenar el estado de selección por jugador
+local seleccionesActivas = {}
+
+-- Cambio: Almacenar las últimas posiciones de cada jugador
+local ultimasPosiciones = {}
+
+-- Mensajes de depuración
+print("[HabilidadesServer] ===== INICIANDO SISTEMA =====")
+print("[HabilidadesServer] Módulos cargados:")
+print("- habilidadesPorPersonaje: " .. tostring(habilidadesPorPersonaje and "✓" or "✗"))
+print("- VidaManager: " .. tostring(VidaManager and "✓" or "✗"))
+print("- BasicAttacks: " .. tostring(BasicAttacks and "✓" or "✗"))
+print("- EquipoManager: " .. tostring(EquipoManager and "✓" or "✗"))
+
+-- Listar personajes disponibles
+print("[HabilidadesServer] Personajes con habilidades disponibles:")
+for charName, habilidades in pairs(habilidadesPorPersonaje) do
+	print(" - " .. charName .. ":")
+
+	if type(habilidades) == "table" then
+		for tecla, habilidad in pairs(habilidades) do
+			if type(habilidad) == "table" and habilidad.Name then
+				print("   * " .. tecla .. ": " .. habilidad.Name)
+			elseif type(habilidad) == "table" then
+				print("   * " .. tecla .. ": [Tabla sin nombre]")
+			elseif type(habilidad) == "function" then
+				print("   * " .. tecla .. ": [Función directa]")
+			else
+				print("   * " .. tecla .. ": [Tipo: " .. type(habilidad) .. "]")
+			end
+		end
+	else
+		print("   [No es una tabla: " .. type(habilidades) .. "]")
+	end
+end
+
+-- Helper to get character type
+local function GetCharacterType(character)
+	local nombrePersonajeValue = character:FindFirstChild("NombrePersonaje")
+	return nombrePersonajeValue and nombrePersonajeValue.Value or nil
+end
+
+-- Función para verificar si un objetivo es válido para una habilidad
+local function EsObjetivoValido(jugador, objetivo, requiereAliado)
+	if not objetivo or not objetivo:FindFirstChildOfClass("Humanoid") then
+		print("[EsObjetivoValido] Objetivo inválido o sin humanoid")
+		return false
+	end
+
+	-- Si requiere aliado, verificar que no sea enemigo
+	if requiereAliado then
+		local sonEnemigos = EquipoManager.SonEnemigos(jugador.Character, objetivo)
+		print("[EsObjetivoValido] Requiere aliado. Son enemigos:", sonEnemigos)
+		return not sonEnemigos
+	else
+		local sonEnemigos = EquipoManager.SonEnemigos(jugador.Character, objetivo)
+		print("[EsObjetivoValido] Requiere enemigo. Son enemigos:", sonEnemigos)
+		return sonEnemigos
+	end
+end
+
+-- Cambio: Manejar posición del mouse/touch
+DireccionHabilidadEvent.OnServerEvent:Connect(function(player, posicion)
+	ultimasPosiciones[player] = posicion
+end)
+
+-- Cambio: Función para obtener la posición del jugador
+local function ObtenerPosicionMouse(player)
+	return ultimasPosiciones[player] or Vector3.new(0, 0, 0)
+end
+
+-- 🗡️ Basic attack per character (left click)
+GolpeBasico.OnServerEvent:Connect(function(player)
+	local character = player.Character
+	if not character then
+		warn("❌ Player character not found.")
+		return
+	end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		warn("❌ HumanoidRootPart not found.")
+		return
+	end
+
+	local currentHero = GetCharacterType(character)
+	local basicAttack = currentHero and BasicAttacks[currentHero]
+
+	-- Search for target in range
+	local radio = 6
+	local target = nil
+
+	for _, obj in workspace:GetDescendants() do
+		if obj:IsA("Model") and obj ~= character then
+			local hrpObj = obj:FindFirstChild("HumanoidRootPart")
+			if hrpObj and (hrp.Position - hrpObj.Position).Magnitude <= radio then
+				local humanoid = obj:FindFirstChildOfClass("Humanoid")
+				local vidaValue = obj:FindFirstChild("Vida")
+				if (humanoid and humanoid.Health > 0) or (vidaValue and vidaValue:IsA("IntValue") and vidaValue.Value > 0) then
+					target = obj
+					break
+				end
+			end
+		end
+	end
+
+	-- Execute the basic attack defined by character
+	if basicAttack and target then
+		basicAttack(character, target)
+	end
+end)
+
+-- Manejar selección de objetivo para habilidades
+SeleccionEvent.OnServerEvent:Connect(function(player, objetivo)
+	print("[SeleccionEvent] 🔍 Evento recibido - Jugador:", player.Name, "Objetivo:", objetivo and objetivo.Name or "nil")
+
+	if not seleccionesActivas[player] then
+		print("[SeleccionEvent] ❌ No hay selección activa para", player.Name)
+		return
+	end
+
+	local datosSeleccion = seleccionesActivas[player]
+	local tecla = datosSeleccion.tecla
+	local character = player.Character
+
+	if not character then
+		seleccionesActivas[player] = nil
+		print("[SeleccionEvent] ❌ No hay character para", player.Name)
+		return
+	end
+
+	local nombrePersonajeValue = character:FindFirstChild("NombrePersonaje")
+	if not nombrePersonajeValue then
+		seleccionesActivas[player] = nil
+		print("[SeleccionEvent] ❌ No hay NombrePersonaje para", character.Name)
+		return
+	end
+
+	local personajeActual = nombrePersonajeValue.Value
+	local habilidades = habilidadesPorPersonaje[personajeActual]
+
+	if not habilidades then
+		seleccionesActivas[player] = nil
+		print("[SeleccionEvent] ❌ No hay habilidades para", personajeActual)
+		return
+	end
+
+	local habilidad = habilidades[tostring(tecla)]
+	if habilidad and typeof(habilidad.Execute) == "function" then
+		local nivelHabilidad = datosSeleccion.nivelHabilidad or 1
+		-- Verificar si el objetivo es válido
+		local requiereAliado = datosSeleccion.requiereAliado
+		if EsObjetivoValido(player, objetivo, requiereAliado) then
+			print("[SeleccionEvent] ✅ Ejecutando habilidad de selección:", habilidad.Name or tecla)
+			habilidad.Execute(character, objetivo, nivelHabilidad)
+		else
+			print("[SeleccionEvent] ❌ Objetivo no válido para habilidad")
+			-- Notificar al cliente que el objetivo no es válido
+			local notificacionEvent = RemoteEvents:FindFirstChild("NotificacionHabilidad")
+			if notificacionEvent then
+				local mensaje = requiereAliado and "¡Debes seleccionar un aliado!" or "¡Debes seleccionar un enemigo!"
+				notificacionEvent:FireClient(player, mensaje)
+			end
+		end
+	else
+		print("[SeleccionEvent] ❌ Habilidad no encontrada o no tiene función Execute")
+	end
+
+	-- Limpiar selección
+	seleccionesActivas[player] = nil
+	print("[SeleccionEvent] 🧹 Selección limpiada para", player.Name)
+end)
+
+-- Manejar cancelación de selección
+CancelarSeleccionEvent.OnServerEvent:Connect(function(player)
+	print("[CancelarSeleccionEvent] 🚫 Cancelando selección para:", player.Name)
+	seleccionesActivas[player] = nil
+
+	-- Notificar al cliente que se canceló la selección
+	local notificacionEvent = RemoteEvents:FindFirstChild("NotificacionHabilidad")
+	if notificacionEvent then
+		notificacionEvent:FireClient(player, "Selección cancelada")
+	end
+end)
+
+-- 🔢 Skills 1 to 4 (keys 1–4)
+habilidadEvent.OnServerEvent:Connect(function(player, tecla)
+	print("[HabilidadEvent] 🎯 Evento recibido - Jugador: " .. player.Name .. ", Tecla: " .. tecla)
+
+	local character = player.Character
+	if not character then 
+		print("[HabilidadEvent] ❌ Error: No hay character")
+		return 
+	end
+
+	local nombrePersonajeValue = character:FindFirstChild("NombrePersonaje")
+	if not nombrePersonajeValue then
+		warn("⚠️ Character does not have 'NombrePersonaje' value")
+		return
+	end
+
+	local personajeActual = nombrePersonajeValue.Value
+	local habilidades = habilidadesPorPersonaje[personajeActual]
+
+	if not habilidades then
+		warn("⚠️ No skills found for character:", personajeActual)
+		return
+	end
+
+	local habilidad = habilidades[tostring(tecla)]
+	if habilidad then
+		print("[HabilidadEvent] ✅ Habilidad encontrada:", habilidad.Name or tecla, "Tipo:", habilidad.Tipo or "N/A")
+
+		-- Verificar si el personaje está silenciado
+		if character:GetAttribute("Silenciado") then
+			print("[HabilidadEvent] 🔇 Habilidad bloqueada: personaje silenciado")
+			return
+		end
+
+		-- Obtener nivel de habilidad
+		local nivelHabilidad = character:GetAttribute("Habilidad" .. tecla .. "Nivel") or 1
+
+		-- Verificar el tipo de habilidad
+		if habilidad.Tipo == "Seleccion" then
+			-- Habilidad que requiere selección de objetivo
+			seleccionesActivas[player] = {
+				tecla = tecla,
+				requiereAliado = habilidad.RequiereAliado or false,
+				tiempo = os.time(),
+				nivelHabilidad = nivelHabilidad
+			}
+
+			-- Activar UI de selección en el cliente
+			local activarSeleccionUI = RemoteEvents:FindFirstChild("ActivarSeleccionUI")
+			if activarSeleccionUI then
+				activarSeleccionUI:FireClient(player, habilidad.Name or tecla, habilidad.RequiereAliado or false)
+			end
+
+		elseif habilidad.Tipo == "Direccion" then
+			-- Habilidad que se lanza en una dirección (usando posición objetivo)
+			local posicionObjetivo = ObtenerPosicionMouse(player)
+			local hrp = character:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				-- Calcular dirección desde el personaje hasta la posición objetivo
+				local direccion = (posicionObjetivo - hrp.Position).Unit
+				print("[HabilidadEvent] 🧭 Ejecutando habilidad de dirección hacia:", posicionObjetivo)
+				habilidad.Execute(character, direccion, nivelHabilidad)
+			end
+
+		elseif habilidad.Tipo == "Automatica" then
+			-- Habilidad automática que no requiere objetivo
+			print("[HabilidadEvent] ⚡ Ejecutando habilidad automática")
+			habilidad.Execute(character, nivelHabilidad)
+
+		elseif typeof(habilidad.Execute) == "function" then
+			-- Por defecto, ejecutar como habilidad automática
+			print("[HabilidadEvent] 🔧 Ejecutando habilidad por defecto")
+			habilidad.Execute(character, nivelHabilidad)
+		end
+	else
+		warn("⚠️ No skill found for", tecla, "for", personajeActual)
+		print("[HabilidadEvent] ❌ Habilidad no encontrada para tecla:", tecla)
+	end
+end)
+
+-- Limpiar selecciones expiradas (timeout después de 10 segundos)
+game:GetService("RunService").Heartbeat:Connect(function()
+	local tiempoActual = os.time()
+	for player, datos in pairs(seleccionesActivas) do
+		if tiempoActual - datos.tiempo > 10 then
+			seleccionesActivas[player] = nil
+
+			-- Notificar al cliente que la selección expiró
+			local seleccionUIEvent = RemoteEvents:FindFirstChild("DesactivarSeleccionUI")
+			if seleccionUIEvent then
+				seleccionUIEvent:FireClient(player)
+				print("[Timeout] ⏰ Selección expirada para:", player.Name)
+			end
+		end
+	end
+end)
+
+print("[HabilidadesServer] ✅ Configuración completada")
+-- 🧪 SOLO PARA PRUEBAS: desbloquear habilidades al inicio
+local modoPrueba = true
+
+if modoPrueba then
+	Players.PlayerAdded:Connect(function(player)
+		player.CharacterAdded:Connect(function(character)
+			task.wait(1)
+			for i = 1, 4 do
+				character:SetAttribute("Habilidad" .. i .. "Nivel", 1)
+			end
+			print("🧩 [MODO PRUEBA] Habilidades desbloqueadas para " .. player.Name)
+		end)
+	end)
+end
