@@ -1,0 +1,388 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local eventoTeleport = ReplicatedStorage:WaitForChild("RemoteTeleportJugador")
+local verificarPersonajeEvent = ReplicatedStorage:WaitForChild("VerificarPersonaje")
+local player = Players.LocalPlayer
+
+-- Cargar módulo de personajes
+local PersonajesModule = require(ReplicatedStorage:WaitForChild("PersonajesModule"))
+local personajes = PersonajesModule.personajes
+
+-- UI
+local guiSeleccion = player:WaitForChild("PlayerGui"):WaitForChild("Seleccion")
+local PantallaCarga = guiSeleccion:WaitForChild("PantallaCarga")
+local Fondo1 = guiSeleccion:WaitForChild("Fondo1")
+local HijosdelVacioBtn = Fondo1:WaitForChild("HijosdelVacío")
+local TemplariosdelaLuzBtn = Fondo1:WaitForChild("TemplariosdelaLuz")
+local TiempoRestanteText = Fondo1:WaitForChild("TiempoRestante") or Instance.new("TextLabel")
+local PantallaPersonaje = guiSeleccion:WaitForChild("PantallaPersonaje")
+local Fondo2 = PantallaPersonaje:WaitForChild("Fondo2")
+local Detalles = guiSeleccion:WaitForChild("Detalles")
+local Fondo3 = Detalles:WaitForChild("Fondo3")
+local Vista3D = Fondo3:WaitForChild("Vista3D")
+local Nombre = Fondo3:WaitForChild("Nombre")
+local Descripcion = Fondo3:WaitForChild("Descripcion")
+local BotonConfirmar = Fondo3:WaitForChild("BotonConfirmar")
+local BotonVolver = Fondo3:WaitForChild("BotonVolver")
+
+-- Configurar el texto de tiempo restante si no existe
+if not Fondo1:FindFirstChild("TiempoRestante") then
+	TiempoRestanteText.Name = "TiempoRestante"
+	TiempoRestanteText.Size = UDim2.new(0, 200, 0, 40)
+	TiempoRestanteText.Position = UDim2.new(0.5, -100, 0.1, 0)
+	TiempoRestanteText.BackgroundTransparency = 1
+	TiempoRestanteText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	TiempoRestanteText.TextStrokeTransparency = 0
+	TiempoRestanteText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	TiempoRestanteText.TextSize = 20
+	TiempoRestanteText.Font = Enum.Font.SourceSansBold
+	TiempoRestanteText.Text = "60s"
+	TiempoRestanteText.Parent = Fondo1
+end
+
+-- Inicialmente, mostrar solo la pantalla de carga, ocultar las demás
+PantallaCarga.Visible = true
+Fondo1.Visible = false
+PantallaPersonaje.Visible = false
+Detalles.Visible = false
+
+local equipoSeleccionado = nil
+local personajeSeleccionado = nil
+local modeloActual = nil
+local isRotating = false
+local temporizadorActivo = false
+local tiempoRestante = 60 -- 60 segundos para elegir
+local mensajeError = nil
+
+-- Funciones de utilidad
+local function mostrarPantalla(p1, p2, p3)
+	Fondo1.Visible = p1
+	PantallaPersonaje.Visible = p2
+	Detalles.Visible = p3
+end
+
+local function limpiarVista3D()
+	for _, objeto in pairs(Vista3D:GetChildren()) do
+		if objeto:IsA("Model") or objeto:IsA("Camera") then
+			objeto:Destroy()
+		end
+	end
+	Vista3D.CurrentCamera = nil
+	modeloActual = nil
+end
+
+local function mostrarError(mensaje)
+	-- Limpiar mensaje anterior
+	if mensajeError then
+		mensajeError:Destroy()
+		mensajeError = nil
+	end
+
+	-- Crear nuevo mensaje de error
+	mensajeError = Instance.new("TextLabel")
+	mensajeError.Name = "MensajeError"
+	mensajeError.Size = UDim2.new(0.8, 0, 0.1, 0)
+	mensajeError.Position = UDim2.new(0.1, 0, 0.7, 0)
+	mensajeError.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+	mensajeError.TextColor3 = Color3.fromRGB(255, 255, 255)
+	mensajeError.Text = mensaje
+	mensajeError.TextScaled = true
+	mensajeError.ZIndex = 10
+	mensajeError.Parent = Fondo3
+
+	-- Auto-destruir después de 3 segundos
+	task.delay(3, function()
+		if mensajeError then
+			mensajeError:Destroy()
+			mensajeError = nil
+		end
+	end)
+end
+
+local function mostrarDetalles(nombrePersonaje)
+	local datos = personajes[nombrePersonaje]
+	if not datos then 
+		warn("⚠️ No se encontraron datos para el personaje: " .. nombrePersonaje)
+		return 
+	end
+
+	personajeSeleccionado = nombrePersonaje
+	Nombre.Text = datos.Nombre
+	Descripcion.Text = datos.Descripcion
+
+	limpiarVista3D()
+
+	local modelo = datos.Modelo:Clone()
+
+	-- Limpiar scripts potencialmente problemáticos
+	for _, desc in pairs(modelo:GetDescendants()) do
+		if desc:IsA("Script") or desc:IsA("LocalScript") then
+			desc:Destroy()
+		end
+	end
+
+	modelo.Parent = Vista3D
+
+	-- Buscar y configurar la parte principal
+	local root = modelo:FindFirstChild("HumanoidRootPart") or modelo:FindFirstChild("temp") or modelo:FindFirstChildWhichIsA("BasePart")
+	if root then
+		modelo.PrimaryPart = root
+		modelo:SetPrimaryPartCFrame(CFrame.new(0, 0, 0))
+		modelo.PrimaryPart.Anchored = true
+	end
+
+	-- Configurar cámara para el ViewportFrame
+	local cam = Instance.new("Camera")
+	cam.CFrame = CFrame.new(Vector3.new(0, 2, 5), Vector3.new(0, 1, 0))
+	cam.Parent = Vista3D
+	Vista3D.CurrentCamera = cam
+
+	-- Asignar el modelo actual para rotación
+	modeloActual = modelo
+end
+
+local function setCameraToCharacter(character)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		warn("⚠️ No hay cámara activa en Workspace")
+		return
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local temp = character:FindFirstChild("temp")
+
+	if humanoid then
+		camera.CameraSubject = humanoid
+		camera.CameraType = Enum.CameraType.Custom
+		print("✅ Cámara asignada al Humanoid.")
+	elseif temp then
+		if not character.PrimaryPart then
+			character.PrimaryPart = temp
+		end
+		camera.CameraSubject = temp
+		camera.CameraType = Enum.CameraType.Attach
+		print("🎥 Cámara asignada al MeshPart 'temp'.")
+	else
+		warn("⚠️ No se encontró ni Humanoid ni temp para la cámara.")
+	end
+end
+
+-- Función para confirmar selección (sin verificación, ahora se hace mediante el evento)
+local function confirmarSeleccion()
+	if not personajeSeleccionado or not equipoSeleccionado then
+		warn("⚠️ Falta seleccionar personaje o equipo")
+		return
+	end
+
+	local datos = personajes[personajeSeleccionado]
+
+	-- Clonar script de animaciones si existe
+	local animScript = datos.Modelo:FindFirstChild("LocalScriptAnimaciones")
+	if animScript then
+		local nuevo = animScript:Clone()
+		nuevo.Parent = player:WaitForChild("PlayerScripts")
+	end
+
+	-- Habilitar GUI de habilidades si existe
+	local habilidadesGui = player:WaitForChild("PlayerGui"):FindFirstChild("HabilidadesGui")
+	if habilidadesGui then
+		habilidadesGui.Enabled = true
+	end
+
+	-- Ocultar la GUI de selección
+	guiSeleccion.Enabled = false
+
+	-- Enviar selección al servidor
+	eventoTeleport:FireServer(personajeSeleccionado, equipoSeleccionado)
+
+	-- Limpiar ViewportFrame
+	limpiarVista3D()
+
+	-- Esperar al nuevo personaje y configurar cámara
+	task.spawn(function()
+		local nuevoChar = player.CharacterAdded:Wait()
+		repeat task.wait() until nuevoChar.PrimaryPart or nuevoChar:FindFirstChild("temp")
+		setCameraToCharacter(nuevoChar)
+
+		-- Inicializar sistema de XP después de que el personaje esté listo
+		local XPVisualController = require(player:WaitForChild("PlayerScripts"):WaitForChild("XPVisualController"))
+		XPVisualController.IniciarVisuales(player, nuevoChar)
+	end)
+
+	-- Clonar scripts de habilidades
+	local playerScripts = player:WaitForChild("PlayerScripts")
+	local replicatedStorage = game:GetService("ReplicatedStorage")
+
+	-- Script general de habilidades
+	local generalScript = replicatedStorage:FindFirstChild("LocalScriptHabilidades")
+	if generalScript then
+		local cloneGeneral = generalScript:Clone()
+		cloneGeneral.Parent = playerScripts
+	end
+
+	-- Script específico para Spartan
+	if personajeSeleccionado == "Personaje1" then
+		local spartanScript = replicatedStorage:FindFirstChild("LocalScriptSpartanHabilidades")
+		if spartanScript then
+			local cloneSpartan = spartanScript:Clone()
+			cloneSpartan.Parent = playerScripts
+		end
+	end
+end
+
+-- Función para iniciar temporizador
+local function iniciarTemporizador()
+	temporizadorActivo = true
+	tiempoRestante = 60
+
+	while tiempoRestante > 0 and temporizadorActivo do
+		TiempoRestanteText.Text = "Tiempo: " .. tiempoRestante .. "s"
+		tiempoRestante = tiempoRestante - 1
+		wait(1)
+
+		-- Si ya seleccionó, detener temporizador
+		if equipoSeleccionado and personajeSeleccionado then
+			temporizadorActivo = false
+			break
+		end
+	end
+
+	-- Si se acabó el tiempo y no ha seleccionado
+	if temporizadorActivo and (not equipoSeleccionado or not personajeSeleccionado) then
+		-- Asignar selecciones automáticamente
+		if not equipoSeleccionado then
+			equipoSeleccionado = PersonajesModule.obtenerEquipoBalanceado()
+		end
+
+		if not personajeSeleccionado then
+			personajeSeleccionado = PersonajesModule.obtenerPersonajeAleatorio()
+		end
+
+		-- Verificar disponibilidad del personaje asignado automáticamente
+		verificarPersonajeEvent:FireServer(personajeSeleccionado, equipoSeleccionado)
+	end
+end
+
+-- Manejadores de eventos para botones de equipo
+HijosdelVacioBtn.MouseButton1Click:Connect(function()
+	equipoSeleccionado = "Equipo1"
+	mostrarPantalla(false, true, false)
+end)
+
+TemplariosdelaLuzBtn.MouseButton1Click:Connect(function()
+	equipoSeleccionado = "Equipo2"
+	mostrarPantalla(false, true, false)
+end)
+
+-- Manejadores de eventos para botones de personajes
+for _, boton in pairs(Fondo2:GetChildren()) do
+	if boton:IsA("ImageButton") and personajes[boton.Name] then
+		boton.MouseButton1Click:Connect(function()
+			mostrarDetalles(boton.Name)
+			mostrarPantalla(false, false, true)
+		end)
+	end
+end
+
+-- Botón Volver
+BotonVolver.MouseButton1Click:Connect(function()
+	if mensajeError then
+		mensajeError:Destroy()
+		mensajeError = nil
+	end
+	mostrarPantalla(false, true, false)
+	limpiarVista3D()
+end)
+
+-- Botón Confirmar
+BotonConfirmar.MouseButton1Click:Connect(function()
+	if not personajeSeleccionado or not equipoSeleccionado then
+		mostrarError("⚠️ Debes seleccionar un personaje y equipo")
+		return
+	end
+
+	print("🎯 Confirmando selección: " .. personajeSeleccionado)
+
+	-- Deshabilitar botón temporalmente
+	BotonConfirmar.Active = false
+	BotonConfirmar.Text = "Verificando..."
+
+	-- Verificar disponibilidad con el servidor
+	verificarPersonajeEvent:FireServer(personajeSeleccionado, equipoSeleccionado)
+end)
+
+-- Manejador de respuesta del servidor sobre disponibilidad
+verificarPersonajeEvent.OnClientEvent:Connect(function(exitoso, nombrePersonaje, datosExtra)
+	if exitoso then
+		-- ✅ Personaje disponible - proceder con confirmación
+		print("✅ Personaje disponible, procediendo con teleport...")
+		temporizadorActivo = false
+		confirmarSeleccion()
+	else
+		-- ❌ Personaje ocupado - mostrar error
+		local jugadorOcupante = datosExtra
+		mostrarError("❌ " .. nombrePersonaje .. " ya fue seleccionado por " .. jugadorOcupante)
+
+		-- Rehabilitar botón
+		BotonConfirmar.Active = true
+		BotonConfirmar.Text = "Confirmar"
+
+		print("❌ Personaje ocupado por: " .. jugadorOcupante)
+	end
+end)
+
+-- Configurar cámara cuando el personaje aparece
+player.CharacterAdded:Connect(function(character)
+	task.defer(function()
+		print("🎥 Intentando ajustar cámara al nuevo personaje:", character.Name)
+		local timeout = 5
+		local startTime = tick()
+		repeat
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			local temp = character:FindFirstChild("temp")
+			if humanoid or temp then break end
+			task.wait(0.05)
+		until tick() - startTime > timeout
+		setCameraToCharacter(character)
+	end)
+end)
+
+-- Configurar cámara si el personaje ya existe
+if player.Character then
+	task.defer(function()
+		setCameraToCharacter(player.Character)
+	end)
+end
+
+-- Sistema de rotación para modelos en ViewportFrame
+UserInputService.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton2 and Detalles.Visible then
+		isRotating = true
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		isRotating = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if isRotating and input.UserInputType == Enum.UserInputType.MouseMovement and modeloActual and modeloActual.PrimaryPart then
+		local deltaX = input.Delta.X
+		local rotation = CFrame.Angles(0, math.rad(-deltaX), 0)
+		modeloActual:SetPrimaryPartCFrame(modeloActual.PrimaryPart.CFrame * rotation)
+	end
+end)
+
+-- Esperar 5 segundos de pantalla de carga, luego mostrar la selección de equipo
+wait(5)
+PantallaCarga.Visible = false
+Fondo1.Visible = true
+
+-- Iniciar temporizador después de la carga
+iniciarTemporizador()
+
+print("✅ Sistema de selección cargado correctamente")
